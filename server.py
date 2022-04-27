@@ -31,16 +31,16 @@ def to_string(bytes_) -> str:
 
 SENTINEL = (
     f"@SENTINEL\n"
-    f"{'T' * 100}\n"
+    f"{'T'}\n"
     "+\n"
-    f"{'!' * 100}\n"
+    f"{'!'}\n"
 )
 
 DUMMYSEQ = (
     f"@DUMMY\n"
-    f"{'T' * 100}\n"
+    f"{'T'}\n"
     "+\n"
-    f"{'!' * 100}\n"
+    f"{'!'}\n"
 )
 
 
