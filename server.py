@@ -28,6 +28,20 @@ def to_bytes(string) -> bytes:
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
 
+SENTINEL = (
+    f"@\SENTINEL\n"
+    f"{'T' * 100}\n"
+    "+\n"
+    f"{'!' * 100}\n"
+)
+
+DUMMYSEQ = (
+    f"@DUMMY\n"
+    f"{'T' * 100}\n"
+    "+\n"
+    f"{'!' * 100}\n"
+)
+
 
 class Server:
     def __init__(self, ports, kraken_db_dir):
@@ -39,8 +53,8 @@ class Server:
         # Note: In the PUB/SUB pattern, if the publisher has started
         # publishing before the subscriber connects, the previous messages
         # will be lost
-        self.data_socket = self.context.socket(zmq.PUB)
-        self.data_socket.bind(f"tcp://127.0.0.1:5556")
+        self.data_socket = self.context.socket(zmq.REQ)
+        self.data_socket.connect(f"tcp://127.0.0.1:5556")
 
         cmd = [
             'kraken2',
@@ -60,30 +74,41 @@ class Server:
 
         self.publish_thread = Thread(target=self.publish_results)
         self.publish_thread.start()
-
-        self.seqs_processed = 0
+        self.flushing = False
 
         print('Server started')
 
     def publish_results(self):
         """
-        Return the stream of kraken2 results back to the client.
+        Return the stdout stream of kraken2 results back to the client.
         Keep a track of how many output lines we have processed by counting
         newlines.
 
         """
         print('publish thread started')
+        x = 0
         while True:
             # What is a sensible n for read() here?
             # Are there message size limits? Does ZMQ handle this for us?
-            line = self.k2proc.stdout.read(1000)
-            if not line:
-                print('sleep')
-                time.sleep(0.5)
-                continue
+
+            line = self.k2proc.stdout.readline()
+            x = x + 1
             # print(line)
-            self.seqs_processed += line.count('\n')
-            self.data_socket.send(to_bytes(line))
+            #
+            if line.startswith('U	DUMMY'):
+                if self.flushing:
+                    print('flushing')
+                    self.data_socket.send_multipart(
+                        [b'DONE', b'done'])
+                    self.data_socket.recv()
+                    print('9999999999')
+                    self.flushing = False
+                    continue
+                else:
+                    # Remaining dummy flush from previous sample
+                    continue
+            self.data_socket.send_multipart([b'NOTDONE', to_bytes(line)])
+            self.data_socket.recv()
 
     def recv(self):
         """
@@ -114,6 +139,7 @@ class Server:
         :param sample_id:
         :return:
         """
+        return b'test'
         sample_id, sample_size = msg
         sample_size = int(sample_size)
         while True:
@@ -125,18 +151,34 @@ class Server:
             time.sleep(0.5)
 
     def start(self, seq_id: List) -> bytes:
-        # Currently doesn't do much
+        # Currently, doesn't do much
         print(f'Now doing seq for {seq_id[0]}')
         # Create a filelock here?
         return to_bytes(f'starting {seq_id[0]}')
 
-    def run_batch(self, seq: bytes) -> bytes:
+    def run_batch(self, msg: List) -> bytes:
         # Can we change this to listen on another socket that does not need to
         # reply after each seq input?
-        seq = seq[0].decode('UTF-8')
-        self.k2proc.stdin.write(seq)
-        self.k2proc.stdin.flush()
-        return b'done'
+        seq = msg[0].decode('UTF-8')
+        status = msg[1].decode('UTF-8')
+
+        if status == 'NOTDONE':
+            self.k2proc.stdin.write(seq)
+            self.k2proc.stdin.flush()
+            print('Server: awaiting more chunks from the client')
+            return b'Server: awaiting more chunks from the client'
+        else:
+            print('whooo')
+            self.flushing = True
+            self.flush()
+            return b'Server: Final chunk received. Tidying up ...'
+
+    def flush(self):
+        # self.k2proc.stdin.write(SENTINEL)      # This is what we will look for
+        for f in range(100000):
+            print(f) # This is now the problem. Why doe sit not fo to the end
+            self.k2proc.stdin.write(DUMMYSEQ)  # This is to force flush
+            # self.k2proc.stdin.write('\n')
 
 
 if __name__ == '__main__':
