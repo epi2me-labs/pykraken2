@@ -28,8 +28,9 @@ def to_bytes(string) -> bytes:
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
 
+
 SENTINEL = (
-    f"@\SENTINEL\n"
+    f"@SENTINEL\n"
     f"{'T' * 100}\n"
     "+\n"
     f"{'!' * 100}\n"
@@ -74,7 +75,6 @@ class Server:
 
         self.publish_thread = Thread(target=self.publish_results)
         self.publish_thread.start()
-        self.flushing = False
 
         print('Server started')
 
@@ -93,22 +93,21 @@ class Server:
 
             line = self.k2proc.stdout.readline()
             x = x + 1
-            # print(line)
-            #
+
             if line.startswith('U	DUMMY'):
-                if self.flushing:
-                    print('flushing')
-                    self.data_socket.send_multipart(
-                        [b'DONE', b'done'])
-                    self.data_socket.recv()
-                    print('9999999999')
-                    self.flushing = False
+                if self.processing:  # Still accepting data
                     continue
-                else:
-                    # Remaining dummy flush from previous sample
-                    continue
-            self.data_socket.send_multipart([b'NOTDONE', to_bytes(line)])
-            self.data_socket.recv()
+
+            if line.startswith('U	SENTINEL'):
+                print('Terminating connection')
+                self.data_socket.send_multipart(
+                    [b'DONE', b'done'])
+                self.data_socket.recv()
+                continue
+
+            else:
+                self.data_socket.send_multipart([b'NOTDONE', to_bytes(line)])
+                self.data_socket.recv()
 
     def recv(self):
         """
@@ -153,6 +152,7 @@ class Server:
     def start(self, seq_id: List) -> bytes:
         # Currently, doesn't do much
         print(f'Now doing seq for {seq_id[0]}')
+        self.processing = True
         # Create a filelock here?
         return to_bytes(f'starting {seq_id[0]}')
 
@@ -169,16 +169,16 @@ class Server:
             return b'Server: awaiting more chunks from the client'
         else:
             print('whooo')
-            self.flushing = True
             self.flush()
             return b'Server: Final chunk received. Tidying up ...'
 
     def flush(self):
-        # self.k2proc.stdin.write(SENTINEL)      # This is what we will look for
+        self.k2proc.stdin.write(SENTINEL)      # This is what we will look for
         for f in range(100000):
-            print(f) # This is now the problem. Why doe sit not fo to the end
+            # print(f) # This is now the problem. Why doe sit not fo to the end
             self.k2proc.stdin.write(DUMMYSEQ)  # This is to force flush
             # self.k2proc.stdin.write('\n')
+        print('final dummy', f)
 
 
 if __name__ == '__main__':

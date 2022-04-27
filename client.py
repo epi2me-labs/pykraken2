@@ -5,7 +5,7 @@ import zmq
 from typing import List
 from threading import Thread
 import re
-
+import time
 
 from server import START, STOP, RUN_BATCH
 from server import to_bytes as b
@@ -15,7 +15,14 @@ from server import to_string as s
 def receive_results(port, outfile):
     context = zmq.Context()
     socket = context.socket(zmq.REP)
-    socket.bind(f'tcp://127.0.0.1:{port}')
+
+    while True:
+        try:
+            socket.bind(f'tcp://127.0.0.1:{port}')
+        except zmq.error.ZMQError as e:
+            'waiting for return socket'
+        else:
+            break
     print("C.receive_results: starting")
 
     with open(outfile, 'w') as fh:
@@ -43,13 +50,21 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
 
     #  Socket to talk to server
     print("Connecting to service")
+
     socket = context.socket(zmq.REQ)
 
     # Start thread for receiving input
     recv_thread = Thread(target=receive_results, args=(ports[1], outpath))
     recv_thread.start()
 
-    socket.connect(f"tcp://127.0.0.1:5555")
+    while True:
+        try:
+            socket.connect(f"tcp://127.0.0.1:5555")
+        except zmq.error.ZMQError as e:
+            print('waiting for connection')
+            time.sleep(2)
+        else:
+            break
 
     reads_sent = 0
 
