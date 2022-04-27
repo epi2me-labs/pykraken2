@@ -53,7 +53,7 @@ class Server:
 
         self.k2proc = sub.Popen(
             cmd, stdin=sub.PIPE, stdout=sub.PIPE,
-            universal_newlines=True, bufsize=1)
+            universal_newlines=True)
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
@@ -72,14 +72,16 @@ class Server:
         newlines.
 
         """
+        print('publish thread started')
         while True:
             # What is a sensible n for read() here?
             # Are there message size limits? Does ZMQ handle this for us?
-            line = self.k2proc.stdout.read(10000)
+            line = self.k2proc.stdout.read(1000)
             if not line:
+                print('sleep')
                 time.sleep(0.5)
                 continue
-            print(line)
+            # print(line)
             self.seqs_processed += line.count('\n')
             self.data_socket.send(to_bytes(line))
 
@@ -114,13 +116,12 @@ class Server:
         """
         sample_id, sample_size = msg
         sample_size = int(sample_size)
-
         while True:
-            print(f'Sample_size: {sample_size}, Seqs processed: {self.seqs_processed}')
+            # print(f'Sample_size: {sample_size}, Seqs processed: {self.seqs_processed}')
             if self.seqs_processed >= sample_size:
                 print('All seqs processed')
                 self.seqs_processed = 0
-                return 'Stop processing {sample_id}'.format(sample_id).encode('UTF-8')
+                return 'Stop processing {}'.format(sample_id).encode('UTF-8')
             time.sleep(0.5)
 
     def start(self, seq_id: List) -> bytes:
@@ -132,9 +133,11 @@ class Server:
     def run_batch(self, seq: bytes) -> bytes:
         # Can we change this to listen on another socket that does not need to
         # reply after each seq input?
-        self.k2proc.stdin.write(seq[0].decode('UTF-8'))
+        seq = seq[0].decode('UTF-8')
+        self.k2proc.stdin.write(seq)
         self.k2proc.stdin.flush()
         return b'done'
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

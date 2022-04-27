@@ -79,17 +79,20 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
                     # outputs are flushed. More fake seqs are needed as the
                     # output of unclassified reads takes up less space.
                     # There's probably a better solution
-                    for f in range(6000):
+                    for f in range(10000):
                         socket.send_multipart([b(RUN_BATCH), b(fakeseq)])
                         socket.recv()
+                        print(f)
                     break
+            print('toast')
+            # socket.send_multipart([b(STOP), b(sample_id), b(str(reads_sent))])
             socket.send_multipart([b(STOP), b(sample_id), b(str(reads_sent))])
+            print('toast done')
+            exit(0)
         # Removed the fakeseq flushers
         # with open()
 
     # socket.send_multipart([b(STOP), b(sample_id)])  # This would normally be a separate client instance
-
-
 
 
 
