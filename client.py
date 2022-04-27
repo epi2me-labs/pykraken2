@@ -1,17 +1,14 @@
 #! /usr/bin/env python
 
 import argparse
-from pathlib import Path
 import zmq
 from typing import List
-import time
-import sys
-from fastx import Fastx
 from threading import Thread
+import re
+
 
 from server import START, STOP, RUN_BATCH
 from server import to_bytes as b
-from server import to_string as s
 
 fakeseq = (
     f"@FAKESEQ_\n"
@@ -58,34 +55,35 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
 
     socket.connect(f"tcp://127.0.0.1:5555")
 
+    reads_sent = 0
+
     if query[0] == STOP:
         socket.send_multipart([b(STOP), b(sample_id)])
         print("Sending request %s …" % query[0])
-
     else:
-        with open(query[1], 'rb') as fh:
-            # print(i)
+        with open(query[1], 'r') as fh:
+            socket.send_multipart([b(START), b(sample_id)])
+            socket.recv()
             while True:
                 seq = fh.read(1000000)
+                reads_sent += len(re.findall('^@', seq, re.MULTILINE))
                 if seq:
-                    socket.send_multipart([b(RUN_BATCH), seq])
+                    socket.send_multipart([b(RUN_BATCH), b(seq)])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
                     socket.recv()
                 else:
-                    # The output from kraken is buffered at ~ 1064 lines
-                    # But can be up to 1084.
+                    # The output from kraken is buffered at 458752
+                    # (~ 1064-1084 lines of output)
                     # This bodge sends in 6000 seqs to ensure all the real
                     # outputs are flushed. More fake seqs are needed as the
-                    # output of UNCLASSIFIED reads takes up less space.
-                    # I anticipate a better solution
-                    # is possible. But at least works for now
-
+                    # output of unclassified reads takes up less space.
+                    # There's probably a better solution
                     for f in range(6000):
                         socket.send_multipart([b(RUN_BATCH), b(fakeseq)])
                         socket.recv()
                     break
-            socket.send_multipart([b(STOP), b(sample_id)])
+            socket.send_multipart([b(STOP), b(sample_id), b(str(reads_sent))])
         # Removed the fakeseq flushers
         # with open()
 
