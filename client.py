@@ -50,10 +50,6 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
 
-    # Start thread for receiving input
-    recv_thread = Thread(target=receive_results, args=(ports[1], outpath))
-    recv_thread.start()
-
     while True:
         try:
             socket.connect(f"tcp://127.0.0.1:5555")
@@ -74,7 +70,12 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
                 socket.send_multipart([b(START), b(sample_id)])
                 lock = int(socket.recv())
                 if lock:
-                    print(f'Aquired lock on server: {sample_id}')
+                    print(f'Acquired lock on server: {sample_id}')
+
+                    # Start thread for receiving input
+                    recv_thread = Thread(target=receive_results,
+                                         args=(ports[1], outpath))
+                    recv_thread.start()
                     break
                 else:
                     time.sleep(3)
@@ -111,8 +112,6 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
                     socket.recv()
                     print('Client sending finished')
                     break
-
-
 
 
 if __name__ == '__main__':

@@ -1,15 +1,10 @@
 #! /usr/bin/env python
-import queue
-
-import time
 from typing import List
-import re
 import argparse
-from collections import defaultdict
 import zmq
-from pathlib import Path
 from threading import Thread
 import subprocess as sub
+import datetime
 
 # Sever query signals
 START = 'start'
@@ -48,13 +43,6 @@ class Server:
     def __init__(self, ports, kraken_db_dir):
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
-        self.input_socket = self.context.socket(zmq.REP)
-        self.input_socket.bind(f'tcp://127.0.0.1:{ports[0]}')
-
-        self.data_socket = self.context.socket(zmq.REQ)
-        self.data_socket.connect(f"tcp://127.0.0.1:5556")
-
-        self.lock = False
 
         cmd = [
             'kraken2',
@@ -66,16 +54,34 @@ class Server:
         ]
 
         self.k2proc = sub.Popen(
-            cmd, stdin=sub.PIPE, stdout=sub.PIPE,
+            cmd, stdin=sub.PIPE, stdout=sub.PIPE, stderr=sub.PIPE,
             universal_newlines=True)
+
+        # Wait for database loading before binding to input socket
+        print('Loading kraken2 database')
+        start = datetime.datetime.now()
+        while True:
+            err_line = self.k2proc.stderr.readline()
+            if 'done' in err_line:
+                print('Database loaded. Binding to input socket')
+                break
+        end = datetime.datetime.now()
+        delta = end - start
+        print(f'Kraken database loading duration: {delta}')
+
+        self.input_socket = self.context.socket(zmq.REP)
+        self.input_socket.bind(f'tcp://127.0.0.1:{ports[0]}')
+
+        self.return_socket = self.context.socket(zmq.REQ)
+        self.return_socket.connect(f"tcp://127.0.0.1:5556")
+
+        self.lock = False
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
 
         self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
-
-        print('Sever: Server started')
 
     def return_results(self):
         """
@@ -92,15 +98,15 @@ class Server:
                 continue
             elif line.startswith('U	SENTINEL'):
                 print('Sever: Terminating connection')
-                self.data_socket.send_multipart(
+                self.return_socket.send_multipart(
                     [b'DONE', b'done'])
-                self.data_socket.recv()
+                self.return_socket.recv()
                 self.lock = False
                 continue
 
             else:
-                self.data_socket.send_multipart([b'NOTDONE', to_bytes(line)])
-                self.data_socket.recv()
+                self.return_socket.send_multipart([b'NOTDONE', to_bytes(line)])
+                self.return_socket.recv()
 
     def recv(self):
         """
