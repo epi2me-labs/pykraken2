@@ -47,10 +47,6 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
     :return:
     """
     context = zmq.Context()
-
-    #  Socket to talk to server
-    print("Connecting to service")
-
     socket = context.socket(zmq.REQ)
 
     # Start thread for receiving input

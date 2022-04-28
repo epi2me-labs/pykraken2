@@ -31,16 +31,16 @@ def to_string(bytes_) -> str:
 
 SENTINEL = (
     f"@SENTINEL\n"
-    f"{'T'}\n"
+    f"{'T' * 50}\n"
     "+\n"
-    f"{'!'}\n"
+    f"{'!' * 50}\n"
 )
 
 DUMMYSEQ = (
     f"@DUMMY\n"
-    f"{'T'}\n"
+    f"{'T' * 50}\n"
     "+\n"
-    f"{'!'}\n"
+    f"{'!' * 50}\n"
 )
 
 
@@ -90,7 +90,6 @@ class Server:
         while True:
             # What is a sensible n for read() here?
             # Are there message size limits? Does ZMQ handle this for us?
-
             line = self.k2proc.stdout.readline()
             x = x + 1
 
@@ -165,7 +164,8 @@ class Server:
         if status == 'NOTDONE':
             self.k2proc.stdin.write(seq)
             self.k2proc.stdin.flush()
-            print('Server: awaiting more chunks from the client')
+            print('batch')
+            # print('Server: awaiting more chunks from the client')
             return b'Server: awaiting more chunks from the client'
         else:
             print('whooo')
@@ -173,6 +173,7 @@ class Server:
             return b'Server: Final chunk received. Tidying up ...'
 
     def flush(self):
+        print('flush')
         self.k2proc.stdin.write(SENTINEL)      # This is what we will look for
         for f in range(100000):
             # print(f) # This is now the problem. Why doe sit not fo to the end
