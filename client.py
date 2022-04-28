@@ -32,7 +32,8 @@ def receive_results(port, outfile):
             status = s(status)
             # print(status)
             if status == 'DONE':
-                print('terminating receive results thread')
+                print('Client: Received data processing complete message from '
+                      'server')
                 return
             fh.write(result.decode('UTF-8'))
             fh.flush()
@@ -56,28 +57,34 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
     while True:
         try:
             socket.connect(f"tcp://127.0.0.1:5555")
-        except zmq.error.ZMQError as e:
+        except Exception as e:
             print('waiting for connection')
             time.sleep(2)
         else:
             break
 
-    reads_sent = 0
-
-    if query[0] == STOP:
+    if query[0] == STOP:  # Stop the server
         socket.send_multipart([b(STOP), b(sample_id)])
         print("Sending request %s …" % query[0])
     else:
         with open(query[1], 'r') as fh:
-            socket.send_multipart([b(START), b(sample_id)])
-            socket.recv()
+            while True:
+                # Try to get a unique lock on the server
+                # Could do this is another control socket.
+                socket.send_multipart([b(START), b(sample_id)])
+                lock = int(socket.recv())
+                if lock:
+                    print(f'Aquired lock on server: {sample_id}')
+                    break
+                else:
+                    time.sleep(3)
+                    print(f'Waiting to get lock on server lock {sample_id}')
+
             while True:
                 # There wsa a suggestion to send all the reads from a sample
                 # as a single message. But this would require reading the whole
                 # fastq file into memory first
-                seq = fh.read(1000000)
-                batch_size = len(re.findall('^@', seq, re.MULTILINE))
-                reads_sent += batch_size
+                seq = fh.read(10000000)
 
                 if seq:
                     socket.send_multipart(
@@ -102,10 +109,9 @@ def run_query(ports, query: List, outpath: str, sample_id: str):
                     socket.send_multipart(
                         [b(RUN_BATCH), b('?'), b('DONE')])
                     socket.recv()
-                    print('elephant')
+                    print('Client sending finished')
                     break
-            print('toast done')
-    # recv_thread.terminate()
+
 
 
 

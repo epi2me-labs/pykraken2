@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+from pdb import line_prefix
 import queue
 
 import time
@@ -48,13 +49,11 @@ class Server:
     def __init__(self, ports, kraken_db_dir):
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
-        self.input_socket = self.context.socket(zmq.REP)
-        self.input_socket.bind(f'tcp://127.0.0.1:{ports[0]}')
+        self.control_socket = self.context.socket(zmq.REP)
+        self.control_socket.bind(f'tcp://127.0.0.1:{ports[0]}')
 
         self.data_socket = self.context.socket(zmq.REQ)
         self.data_socket.connect(f"tcp://127.0.0.1:5556")
-
-        self.lock = False
 
         cmd = [
             'kraken2',
@@ -75,7 +74,7 @@ class Server:
         self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
 
-        print('Sever: Server started')
+        print('Server started')
 
     def return_results(self):
         """
@@ -84,18 +83,21 @@ class Server:
         newlines.
 
         """
-        print('Server: publish thread started')
+        print('publish thread started')
+        # cdef char line
+
         while True:
             line = self.k2proc.stdout.readline()
 
             if line.startswith('U	DUMMY'):
-                continue
-            elif line.startswith('U	SENTINEL'):
-                print('Sever: Terminating connection')
+                if self.processing:  # Still accepting data
+                    continue
+
+            if line.startswith('U	SENTINEL'):
+                print('Terminating connection')
                 self.data_socket.send_multipart(
                     [b'DONE', b'done'])
                 self.data_socket.recv()
-                self.lock = False
                 continue
 
             else:
@@ -109,21 +111,45 @@ class Server:
         while True:
             #  0 in the route frame
             # Message part is remaining frames and can vary in length
-            query = self.input_socket.recv_multipart()
+            query = self.control_socket.recv_multipart()
             route = to_string(query[0])
             msg = getattr(self, route)(query[1:])
-            self.input_socket.send(msg)
+            self.control_socket.send(msg)
+
+    def stop(self, msg: List):
+        """
+        Once a stop signal has been received from the client, no more sequences
+        should be processed until all sequences from the current sample have
+        been processed and the results returned to the client.
+
+        sample_size passed in as part of message contains the number of seqs in
+        this sample determined by the client
+
+        self.seqs_processed is a counter of lines output by kraken
+
+        do periodic checks to see if all output has been done before accepting
+        new connections
+
+        :param sample_id:
+        :return:
+        """
+        return b'test'
+        sample_id, sample_size = msg
+        sample_size = int(sample_size)
+        while True:
+            # print(f'Sample_size: {sample_size}, Seqs processed: {self.seqs_processed}')
+            if self.seqs_processed >= sample_size:
+                print('All seqs processed')
+                self.seqs_processed = 0
+                return 'Stop processing {}'.format(sample_id).encode('UTF-8')
+            time.sleep(0.5)
 
     def start(self, seq_id: List) -> bytes:
-        # Client asking for lock on server.
-        sid = to_string(seq_id[0])
-        if self.lock is False:
-            print(f'Sever: Processing {sid}')
-            self.lock = True
-            reply = '1'
-        else:
-            reply = '0'
-        return to_bytes(reply)
+        # Currently, doesn't do much
+        print(f'Now doing seq for {seq_id[0]}')
+        self.processing = True
+        # Create a filelock here?
+        return to_bytes(f'starting {seq_id[0]}')
 
     def run_batch(self, msg: List) -> bytes:
         # Can we change this to listen on another socket that does not need to
