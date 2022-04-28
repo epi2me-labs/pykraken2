@@ -110,50 +110,45 @@ class Server:
 
     def recv(self):
         """
-        Listens for connections and route queries
+        Listens for messages from the input socket and forwards them to
+        the appropriate functions.
         """
         while True:
-            #  0 in the route frame
-            # Message part is remaining frames and can vary in length
             query = self.input_socket.recv_multipart()
             route = to_string(query[0])
-            msg = getattr(self, route)(query[1:])
+            msg = getattr(self, route)(query[1])
             self.input_socket.send(msg)
 
-    def start(self, seq_id: List) -> bytes:
-        # Client asking for lock on server.
-        sid = to_string(seq_id[0])
+    def start(self, seq_id: bytes) -> bytes:
+        """
+        Clients try to acquire lock on server.
+        """
+        sid = to_string(seq_id)
         if self.lock is False:
-            print(f'Sever: Processing {sid}')
+            print(f'Server: Processing {sid}')
             self.lock = True
             reply = '1'
         else:
             reply = '0'
         return to_bytes(reply)
 
-    def run_batch(self, msg: List) -> bytes:
-        # Can we change this to listen on another socket that does not need to
-        # reply after each seq input?
-        seq = msg[0].decode('UTF-8')
-        status = msg[1].decode('UTF-8')
+    def run_batch(self, msg: bytes) -> bytes:
+        seq = msg.decode('UTF-8')
+        self.k2proc.stdin.write(seq)
+        self.k2proc.stdin.flush()
+        return b'Server: awaiting more chunks from the client'
 
-        if status == 'NOTDONE':
-            self.k2proc.stdin.write(seq)
-            self.k2proc.stdin.flush()
-            return b'Server: awaiting more chunks from the client'
-        else:
-            print('Last batch received from client')
-            self.flush()
-            return b'Server: Final chunk received. Tidying up ...'
-
-    def flush(self):
-        print('flush')
-        self.k2proc.stdin.write(SENTINEL)      # This is what we will look for
-        for f in range(100000):
-            # print(f) # This is now the problem. Why doe sit not fo to the end
-            self.k2proc.stdin.write(DUMMYSEQ)  # This is to force flush
-            # self.k2proc.stdin.write('\n')
-        print('final dummy', f)
+    def stop(self, sample_id: bytes) -> bytes:
+        print('Server: flushing')
+        # Insert sentinel in order to determine end of sample results
+        # in the kraken stdout
+        self.k2proc.stdin.write(SENTINEL)
+        # Now flush all the results from the kraken output buffer
+        # Number of dummy seqs needed determined empirically and not exact.
+        for f in range(40000):
+            self.k2proc.stdin.write(DUMMYSEQ)
+        print("Server: All dummy seqs written")
+        return to_bytes(f'Server got STOP signal from client for {sample_id}')
 
 
 if __name__ == '__main__':
