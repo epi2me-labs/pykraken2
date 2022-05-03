@@ -99,34 +99,52 @@ class Server:
 
         """
         print('Server: publish thread started')
-        sample_started = False  # Whether we are in a bunch of sequence reads
+
+        sample_started = False
+
         while True:
-            # if self.preflush:  # Get rid of buffer dummies from previous sample
-            #     print('Preflushing buffer')
-            #     for i in range(self.preflush):
-            #         self.k2proc.stdout.readline()
             stdout = self.k2proc.stdout.read(100000)
             num_processed = stdout.count('\n')
             # print(f'num processed: {num_processed}')
             self.seqs_to_process -= num_processed
+            print(f'seqs_to_process: {self.seqs_to_process}')
 
-            if self.seqs_to_process <= 0:
+            if not sample_started:
+                lines = stdout.splitlines()
+                for i, line in enumerate(lines):
+                    if line.startswith('U\tSTART'):
+                        sample_started = True
+                    elif sample_started:
+                        final_bit = '\n'.join(lines[i-1:]) # include teh sentinal for testing
+                        self.return_socket.send_multipart(
+                            [b'NOTDONE', to_bytes(final_bit)])
+                        self.return_socket.recv()
+
+            elif self.seqs_to_process <= 0:
+                print('looking for END sentinel')
                 # If self.seqs_to_process <= 0: all
                 # This final chunk of results should contain the sentinel
                 # TODO need to check that is always the case
-                for line in stdout.splitlines():
+
+                lines = stdout.splitlines()
+                for i, line in enumerate(lines):
                     if line.startswith('U\tEND'):
-                        print('Sever: Terminating connection')
+                        print('Server: Found termination sentinel')
+                        final_bit = '\n'.join(
+                            lines[0: i+1])  # include the sentinel for testing
+                        self.return_socket.send_multipart(
+                            [b'NOTDONE', to_bytes(final_bit)])
+                        self.return_socket.recv()
+
                         self.return_socket.send_multipart(
                             [b'DONE', b'done'])
                         self.return_socket.recv()
+
                         self.lock = False
                         self.seqs_to_process = 0
+                        sample_started = False
                         break
-            elif not sample_started:
-                for line in stdout.splitlines():
-                    if line.startswith('U\tSTART'):
-                        sample_started = True
+
             else:
                 self.return_socket.send_multipart([b'NOTDONE', to_bytes(stdout)])
                 self.return_socket.recv()
@@ -147,10 +165,9 @@ class Server:
         Clients try to acquire lock on server.
         If successful, register the number of sequences to expect
         """
-        self.seqs_to_process = int(to_string(num_seqs))
         if self.lock is False:
-            # print(f'Server: Processing {sid}')
             self.lock = True
+            self.seqs_to_process = int(to_string(num_seqs))
             self.k2proc.stdin.write(SENTINEL_START)
             reply = '1'
         else:

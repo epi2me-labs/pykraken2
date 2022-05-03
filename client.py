@@ -58,6 +58,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
             socket.send_multipart([b(START), b(numseqs)])
 
             lock = int(socket.recv())
+
             if lock:
                 print(f'Acquired lock on server: {sample_id}')
 
