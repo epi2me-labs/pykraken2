@@ -23,9 +23,15 @@ def to_bytes(string) -> bytes:
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
 
+SENTINEL_START = (
+    f"@START\n"
+    f"{'T' * 50}\n"
+    "+\n"
+    f"{'!' * 50}\n"
+)
 
-SENTINEL = (
-    f"@SENTINEL\n"
+SENTINEL_END = (
+    f"@END\n"
     f"{'T' * 50}\n"
     "+\n"
     f"{'!' * 50}\n"
@@ -55,7 +61,7 @@ class Server:
 
         self.k2proc = sub.Popen(
             cmd, stdin=sub.PIPE, stdout=sub.PIPE, stderr=sub.PIPE,
-            universal_newlines=True)
+            universal_newlines=True, bufsize=0)
 
         # Wait for database loading before binding to input socket
         print('Loading kraken2 database')
@@ -76,6 +82,8 @@ class Server:
         self.return_socket.connect(f"tcp://127.0.0.1:5556")
 
         self.lock = False
+        self.seqs_to_process = 0
+        self.n_flushseqs = 0
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
@@ -86,26 +94,41 @@ class Server:
     def return_results(self):
         """
         Return the stdout stream of kraken2 results back to the client.
-        Keep a track of how many output lines we have processed by counting
+        Keep a track of how many output lines have been processed by counting
         newlines.
 
         """
         print('Server: publish thread started')
+        sample_started = False  # Whether we are in a bunch of sequence reads
         while True:
-            line = self.k2proc.stdout.readline()
+            # if self.preflush:  # Get rid of buffer dummies from previous sample
+            #     print('Preflushing buffer')
+            #     for i in range(self.preflush):
+            #         self.k2proc.stdout.readline()
+            stdout = self.k2proc.stdout.read(100000)
+            num_processed = stdout.count('\n')
+            # print(f'num processed: {num_processed}')
+            self.seqs_to_process -= num_processed
 
-            if line.startswith('U	DUMMY'):
-                continue
-            elif line.startswith('U	SENTINEL'):
-                print('Sever: Terminating connection')
-                self.return_socket.send_multipart(
-                    [b'DONE', b'done'])
-                self.return_socket.recv()
-                self.lock = False
-                continue
-
+            if self.seqs_to_process <= 0:
+                # If self.seqs_to_process <= 0: all
+                # This final chunk of results should contain the sentinel
+                # TODO need to check that is always the case
+                for line in stdout.splitlines():
+                    if line.startswith('U\tEND'):
+                        print('Sever: Terminating connection')
+                        self.return_socket.send_multipart(
+                            [b'DONE', b'done'])
+                        self.return_socket.recv()
+                        self.lock = False
+                        self.seqs_to_process = 0
+                        break
+            elif not sample_started:
+                for line in stdout.splitlines():
+                    if line.startswith('U\tSTART'):
+                        sample_started = True
             else:
-                self.return_socket.send_multipart([b'NOTDONE', to_bytes(line)])
+                self.return_socket.send_multipart([b'NOTDONE', to_bytes(stdout)])
                 self.return_socket.recv()
 
     def recv(self):
@@ -119,14 +142,16 @@ class Server:
             msg = getattr(self, route)(query[1])
             self.input_socket.send(msg)
 
-    def start(self, seq_id: bytes) -> bytes:
+    def start(self, num_seqs: bytes) -> bytes:
         """
         Clients try to acquire lock on server.
+        If successful, register the number of sequences to expect
         """
-        sid = to_string(seq_id)
+        self.seqs_to_process = int(to_string(num_seqs))
         if self.lock is False:
-            print(f'Server: Processing {sid}')
+            # print(f'Server: Processing {sid}')
             self.lock = True
+            self.k2proc.stdin.write(SENTINEL_START)
             reply = '1'
         else:
             reply = '0'
@@ -142,10 +167,13 @@ class Server:
         print('Server: flushing')
         # Insert sentinel in order to determine end of sample results
         # in the kraken stdout
-        self.k2proc.stdin.write(SENTINEL)
+        self.k2proc.stdin.write(SENTINEL_END)
         # Now flush all the results from the kraken output buffer
         # Number of dummy seqs needed determined empirically and not exact.
-        for f in range(40000):
+        # self.seqs_to_process += n_flush_seqs
+        # self.k2proc.stdin.write(DUMMYSEQ * n_flush_seqs)
+        self.n_flushseqs = 100000
+        for i in range(self.n_flushseqs): # Can we do this outside of a loop?
             self.k2proc.stdin.write(DUMMYSEQ)
         print("Server: All dummy seqs written")
         return to_bytes(f'Server got STOP signal from client for {sample_id}')

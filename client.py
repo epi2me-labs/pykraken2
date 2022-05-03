@@ -2,10 +2,9 @@
 
 import argparse
 import zmq
-from typing import List
 from threading import Thread
-import re
 import time
+import subprocess as sub
 
 from server import START, STOP, RUN_BATCH
 from server import to_bytes as b
@@ -38,25 +37,25 @@ def receive_results(port, outfile):
             fh.flush()
 
 
-def run_query(ports, fastq: str, outpath: str, sample_id: str):
-    """
-    :param port:
-    :param query:
-        ['RUN_BATCH'], 'path/to/reads.fq']
-        ['STOP',]
-    :return:
-    """
+def main(ports, fastq: str, outpath: str, sample_id: str):
+
     send_port, recv_port = ports
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
-    a = f"tcp://127.0.0.1:{send_port}"
     socket.connect(f"tcp://127.0.0.1:{send_port}")
+
+    numseqs = sub.run(
+        f"seqkit stats -T {fastq}|cut -f 4|sed -n 2p"
+        , capture_output=True, shell=True, text=True).stdout
+
+    print(f'{sample_id}, numseqs: {numseqs}')
 
     with open(fastq, 'r') as fh:
         while True:
             # Try to get a unique lock on the server
             # Could do this is another control socket.
-            socket.send_multipart([b(START), b(sample_id)])
+            # register the number of sequences to expect
+            socket.send_multipart([b(START), b(numseqs)])
 
             lock = int(socket.recv())
             if lock:
@@ -97,5 +96,5 @@ if __name__ == '__main__':
     parser.add_argument("--sample_id")
 
     args = parser.parse_args()
-    run_query(args.ports, args.fastq, args.out, args.sample_id)
+    main(args.ports, args.fastq, args.out, args.sample_id)
 
