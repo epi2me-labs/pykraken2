@@ -46,7 +46,7 @@ DUMMYSEQ = (
 
 
 class Server:
-    def __init__(self, ports, kraken_db_dir):
+    def __init__(self, ports, kraken_db_dir, threads=8):
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
 
@@ -56,6 +56,7 @@ class Server:
             '--classified-out', CLASSIFIED_READS,
             '--unclassified-out', UNCLASSIFIED_READS,
             '--db', self.kraken_db_dir,
+            '--threads', threads,
             '/dev/fd/0'
         ]
 
@@ -66,11 +67,13 @@ class Server:
         # Wait for database loading before binding to input socket
         print('Loading kraken2 database')
         start = datetime.datetime.now()
+
         while True:
             err_line = self.k2proc.stderr.readline()
             if 'done' in err_line:
                 print('Database loaded. Binding to input socket')
                 break
+
         end = datetime.datetime.now()
         delta = end - start
         print(f'Kraken database loading duration: {delta}')
@@ -83,7 +86,6 @@ class Server:
 
         self.lock = False
         self.seqs_to_process = 0
-        self.n_flushseqs = 0
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
@@ -91,69 +93,87 @@ class Server:
         self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
 
+
     def return_results(self):
         """
         Return the stdout stream of kraken2 results back to the client.
-        Keep a track of how many output lines have been processed by counting
-        newlines.
+        Loging in here ensures that .
 
         """
         print('Server: publish thread started')
 
-        sample_started = False
+        self.sample_started = False
 
         while True:
             stdout = self.k2proc.stdout.read(100000)
             num_processed = stdout.count('\n')
-            # print(f'num processed: {num_processed}')
             self.seqs_to_process -= num_processed
-            print(f'seqs_to_process: {self.seqs_to_process}')
 
-            if not sample_started:
+            if not self.sample_started:
+                # Iterate over stdout lines until the start sentinel is found
+                # Once found, send proceeding lines to the client the lines proceeding.
                 lines = stdout.splitlines()
                 for i, line in enumerate(lines):
                     if line.startswith('U\tSTART'):
-                        sample_started = True
-                    elif sample_started:
-                        final_bit = '\n'.join(lines[i-1:]) # include teh sentinal for testing
-                        self.return_socket.send_multipart(
-                            [b'NOTDONE', to_bytes(final_bit)])
-                        self.return_socket.recv()
-
-            elif self.seqs_to_process <= 0:
-                print('looking for END sentinel')
-                # If self.seqs_to_process <= 0: all
-                # This final chunk of results should contain the sentinel
-                # TODO need to check that is always the case
-
-                lines = stdout.splitlines()
-                for i, line in enumerate(lines):
-                    if line.startswith('U\tEND'):
-                        print('Server: Found termination sentinel')
-                        final_bit = '\n'.join(
-                            lines[0: i+1])  # include the sentinel for testing
-                        self.return_socket.send_multipart(
-                            [b'NOTDONE', to_bytes(final_bit)])
-                        self.return_socket.recv()
+                        print('found START')
+                        self.sample_started = True
+                    elif self.sample_started:
+                        first_chunk = '\n'.join(lines[i-1:]) # What about if this chunk also contains a an END sentinel from a very small input file>
 
                         self.return_socket.send_multipart(
-                            [b'DONE', b'done'])
+                            [b'NOTDONE', to_bytes(first_chunk)])
                         self.return_socket.recv()
 
-                        self.lock = False
-                        self.seqs_to_process = 0
-                        sample_started = False
+                        print('s1', self.seqs_to_process)
+                        self.seqs_to_process += (i + 10) # Add back on the Dummy a
+                        print('s1_1', self.seqs_to_process)
                         break
 
-            else:
+            if self.sample_started and self.seqs_to_process <= 0:
+                # All seqs should have been processed.
+                # Look through the stdout stream for
+                while True:
+                    if not self.sample_started:
+                        break
+                    lines = stdout.splitlines()
+                    for i, line in enumerate(lines):
+                        # print(line)
+                        print('flush', i)
+                        if line.startswith('U\tEND'):
+                            print('Server: Found termination sentinel')
+                            # Include last chunk up to (and including for testing) the s=stop sentinel
+                            final_bit = '\n'.join(
+                                lines[0: i+1])
+
+                            self.return_socket.send_multipart(
+                                [b'NOTDONE', to_bytes(final_bit)])
+                            self.return_socket.recv()
+
+                            # Client can receive no more messages after the
+                            # DONE signal is returned
+                            self.return_socket.send_multipart(
+                                [b'DONE', b'done'])
+                            self.return_socket.recv()
+
+                            # Release lock and allow other clients to connect
+                            self.lock = False
+                            self.seqs_to_process = 0
+                            self.sample_started = False
+                            print('donnnnnnnne')
+                            break
+                    stdout = self.k2proc.stdout.read(100000)
+
+            if self.sample_started and self.seqs_to_process > 0:
+                print('s3', self.seqs_to_process)
                 self.return_socket.send_multipart([b'NOTDONE', to_bytes(stdout)])
                 self.return_socket.recv()
 
     def recv(self):
         """
-        Listens for messages from the input socket and forwards them to
+        Listens for messages from the input socket and forward them to
         the appropriate functions.
         """
+        print('Server: Waiting for connections')
         while True:
             query = self.input_socket.recv_multipart()
             route = to_string(query[0])
@@ -181,16 +201,11 @@ class Server:
         return b'Server: awaiting more chunks from the client'
 
     def stop(self, sample_id: bytes) -> bytes:
-        print('Server: flushing')
         # Insert sentinel in order to determine end of sample results
-        # in the kraken stdout
         self.k2proc.stdin.write(SENTINEL_END)
-        # Now flush all the results from the kraken output buffer
-        # Number of dummy seqs needed determined empirically and not exact.
-        # self.seqs_to_process += n_flush_seqs
-        # self.k2proc.stdin.write(DUMMYSEQ * n_flush_seqs)
-        self.n_flushseqs = 100000
-        for i in range(self.n_flushseqs): # Can we do this outside of a loop?
+        n_flushseqs = 100000
+        print('Server: flushing')
+        for i in range(n_flushseqs): # Can we do this outside of a loop?
             self.k2proc.stdin.write(DUMMYSEQ)
         print("Server: All dummy seqs written")
         return to_bytes(f'Server got STOP signal from client for {sample_id}')

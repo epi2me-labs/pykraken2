@@ -28,8 +28,7 @@ def receive_results(port, outfile):
         while True:
             status, result = socket.recv_multipart()
             socket.send(b'Recevied')
-            status = s(status)
-            if status == 'DONE':
+            if s(status) == 'DONE':
                 print('Client: Received data processing complete message from '
                       'server')
                 return
@@ -44,9 +43,16 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://127.0.0.1:{send_port}")
 
-    numseqs = sub.run(
+    seqkit = sub.run(
         f"seqkit stats -T {fastq}|cut -f 4|sed -n 2p"
-        , capture_output=True, shell=True, text=True).stdout
+        , capture_output=True, shell=True, text=True)
+
+    while True:
+        numseqs = seqkit.stdout
+        if numseqs:
+            break
+        print('waitng for seqkit')
+        time.sleep(1)
 
     print(f'{sample_id}, numseqs: {numseqs}')
 
@@ -75,10 +81,10 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
             # There wsa a suggestion to send all the reads from a sample
             # as a single message. But this would require reading the whole
             # fastq file into memory first
-            seq = fh.read(10000000)
+            seq = fh.read(10000)
 
             if seq:
-                socket.send_multipart([b(RUN_BATCH), b(str(seq))])
+                socket.send_multipart([b(RUN_BATCH), b(seq)])
                 # It is required to receive with the REQ/REP pattern, even
                 # if the msg is not used
                 socket.recv()
