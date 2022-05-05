@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+import time
 from typing import List
 import argparse
 import zmq
@@ -96,82 +97,100 @@ class Server:
         self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
 
-    def return_results(self):
-        """
-        Return the stdout stream of kraken2 results back to the client.
-        Loging in here ensures that .
-
-        """
-        print('Server: publish thread started')
-
-        self.sample_started = False
+    def do_first_chunk(self,) -> int:
 
         while True:
             stdout = self.k2proc.stdout.read(100000)
-            # Get the number of full sequences analysed.
-            # Does not count partial result line that may be present at the end
+            lines = stdout.splitlines()
 
-            num_processed = stdout.count('\n')
-            self.seqs_to_process -= num_processed
+            for i, line in enumerate(lines):
+                if line.startswith('U\tSTART'):
+                    print('found START')
+                    # -1 includes the sentinel for testing
+                    if i < 1:
+                        i = 1
+                    first_chunk = '\n'.join(lines[i - 1:])
+                    first_chunk_size = len(lines) - i
+                    print(f'First chunk size {first_chunk_size}')
 
-            if not self.sample_started:
-                # Iterate over stdout lines until the start sentinel is found
-                # Then send proceeding lines to the client.
-                lines = stdout.splitlines()
-                for i, line in enumerate(lines):
-                    if line.startswith('U\tSTART'):
-                        print('found START')
-                        self.sample_started = True
-                    elif self.sample_started:
-                        # -1 includes the sentinel for testing
-                        first_chunk = '\n'.join(lines[i-1:])
+                    self.return_socket.send_multipart(
+                        [to_bytes(NOT_DONE), to_bytes(first_chunk)])
+                    self.return_socket.recv()
+                    return first_chunk_size
 
-                        self.return_socket.send_multipart(
-                            [to_bytes(NOT_DONE), to_bytes(first_chunk)])
-                        self.return_socket.recv()
+    def do_final_chunk(self, result_lines):
 
-                        # If there were dummy seqs to remove before the sample,
-                        # remove from total number of seqs processed
-                        self.seqs_to_process += i
-                        break
-                continue
+        print('fc toproc', self.seqs_to_process)
+        first = True
+        while True:
+            if first:
+                stdout = result_lines
+                first = False
+            else:
+                stdout = self.k2proc.stdout.read(100000)
+            lines = stdout.splitlines()
 
-            if self.sample_started and self.seqs_to_process <= 0:
-                # The current stdout chunk should contain the stop sentinel
-                # Search for it and finish up
-                while True:
-                    if not self.sample_started:  # Get rid of self
-                        break
-                    lines = stdout.splitlines()
-                    for i, line in enumerate(lines):
-                        if line.startswith('U\tEND'):
-                            print('Server: Found termination sentinel')
-                            # Include last chunk up to (and including for testing) the s=stop sentinel
-                            final_bit = '\n'.join(
-                                lines[0: i+1])
+            for i, line in enumerate(lines):
+                if line.startswith('U\tEND'):
+                    print('Server: Found termination sentinel')
+                    # Include last chunk up to (and including for testing) the stop sentinel
+                    final_bit = '\n'.join(
+                        lines[0: i + 1])
 
-                            self.return_socket.send_multipart(
-                                [to_bytes(NOT_DONE), to_bytes(final_bit)])
-                            self.return_socket.recv()
+                    self.return_socket.send_multipart(
+                        [to_bytes(NOT_DONE), to_bytes(final_bit)])
+                    self.return_socket.recv()
 
-                            # Client can receive no more messages after the
-                            # DONE signal is returned
-                            self.return_socket.send_multipart(
-                                [to_bytes(DONE), to_bytes(DONE)])
-                            self.return_socket.recv()
+                    # Todo: DONE and NOT_DONE can both send sequences
 
-                            # Release lock and allow other clients to connect
-                            self.lock = False
-                            self.seqs_to_process = 0
-                            self.sample_started = False
-                            print('Stop sentinel found')
-                            break
-                    stdout = self.k2proc.stdout.read(100000)
+                    # Client can receive no more messages after the
+                    # DONE signal is returned
+                    self.return_socket.send_multipart(
+                        [to_bytes(DONE), to_bytes(DONE)])
+                    self.return_socket.recv()
 
-            if self.sample_started and self.seqs_to_process > 0:
-                print('s3', self.seqs_to_process)
-                self.return_socket.send_multipart([to_bytes(NOT_DONE), to_bytes(stdout)])
-                self.return_socket.recv()
+                    print('Stop sentinel found')
+                    return
+
+    def return_results(self):
+        """
+        Return kraken2 results to clients.
+
+        Poll the kraken process stdout for results.
+        Isolates the real results from the dummy results by looking for
+        sentinels
+        """
+        first_chunk_to_do = True
+
+        while True:
+            if self.lock:  # Is a client connected?
+
+                if first_chunk_to_do:
+                    num_seqs = self.do_first_chunk()
+                    first_chunk_to_do = False
+                    self.seqs_to_process -= num_seqs
+
+                stdout = self.k2proc.stdout.read(100000)
+                num_result_lines = stdout.count('\n')
+                self.seqs_to_process -= num_result_lines
+
+                if self.seqs_to_process > 0:
+                    print('toproc', self.seqs_to_process)
+                    self.return_socket.send_multipart(
+                        [to_bytes(NOT_DONE), to_bytes(stdout)])
+                    self.return_socket.recv()
+
+                if self.seqs_to_process <= 0:
+                    print('000000000000000')
+                    self.do_final_chunk(stdout)
+                    print('lllllllllll')
+                    self.seqs_to_process = 0
+                    first_chunk_to_do = True
+                    print('locking')
+                    self.lock = False
+            else:
+                print('S waiting for lock', self.seqs_to_process)
+                time.sleep(2)
 
     def recv(self):
         """
