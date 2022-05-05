@@ -1,6 +1,8 @@
 #! /usr/bin/env python
+"""
+
+"""
 import time
-from typing import List
 import argparse
 import zmq
 from threading import Thread
@@ -26,6 +28,7 @@ def to_bytes(string) -> bytes:
 
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
+
 
 SENTINEL_START = (
     f"@START\n"
@@ -186,7 +189,7 @@ class Server:
                     self.lock = False
             else:
                 print('S waiting for lock', self.seqs_to_process)
-                time.sleep(2)
+                time.sleep(1)
 
     def recv(self):
         """

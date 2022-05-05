@@ -68,7 +68,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
                 recv_thread.start()
                 break
             else:
-                time.sleep(3)
+                time.sleep(1)
                 print(f'Waiting to get lock on server for:  {sample_id}')
 
         while True:
