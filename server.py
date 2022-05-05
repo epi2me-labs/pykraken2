@@ -96,7 +96,6 @@ class Server:
         self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
 
-
     def return_results(self):
         """
         Return the stdout stream of kraken2 results back to the client.
@@ -107,72 +106,78 @@ class Server:
 
         self.sample_started = False
 
-        while True:
-            stdout = self.k2proc.stdout.read(100000)
-            # Get the number of full sequences analysed.
-            # Does not count partial result line that may be present at the end
+        with open('/Users/Neil.Horner/nf_dev/kraken/debug.tsv', 'w') as debug:
+            while True:
+                stdout = self.k2proc.stdout.read(100000)
+                # Get the number of full sequences analysed.
+                # Does not count partial result line that may be present at the end
 
-            num_processed = stdout.count('\n')
-            self.seqs_to_process -= num_processed
+                num_processed = stdout.count('\n')
+                self.seqs_to_process -= num_processed
 
-            if not self.sample_started:
-                # Iterate over stdout lines until the start sentinel is found
-                # Then send proceeding lines to the client.
-                lines = stdout.splitlines()
-                for i, line in enumerate(lines):
-                    if line.startswith('U\tSTART'):
-                        print('found START')
-                        self.sample_started = True
-                    elif self.sample_started:
-                        # -1 includes the sentinel for testing
-                        first_chunk = '\n'.join(lines[i-1:])
-
-                        self.return_socket.send_multipart(
-                            [to_bytes(NOT_DONE), to_bytes(first_chunk)])
-                        self.return_socket.recv()
-
-                        # If there were dummy seqs to remove before the sample,
-                        # remove from total number of seqs processed
-                        self.seqs_to_process += i
-                        break
-
-            if self.sample_started and self.seqs_to_process <= 0:
-                # The current stdout chunk should contain the stop sentinel
-                # Search for it and finish up
-                while True:
-                    if not self.sample_started:  # Get rid of self
-                        break
+                if not self.sample_started:
+                    # Iterate over stdout lines until the start sentinel is found
+                    # Then send proceeding lines to the client.
                     lines = stdout.splitlines()
                     for i, line in enumerate(lines):
-                        print('flush', i)
-                        if line.startswith('U\tEND'):
-                            print('Server: Found termination sentinel')
-                            # Include last chunk up to (and including for testing) the s=stop sentinel
-                            final_bit = '\n'.join(
-                                lines[0: i+1])
+                        if line.startswith('U\tSTART'):
+                            print('found START')
+                            self.sample_started = True
+                        elif self.sample_started:
+                            # -1 includes the sentinel for testing
+                            first_chunk = '\n'.join(lines[i-1:])
 
                             self.return_socket.send_multipart(
-                                [to_bytes(NOT_DONE), to_bytes(final_bit)])
+                                [to_bytes(NOT_DONE), to_bytes(first_chunk)])
                             self.return_socket.recv()
 
-                            # Client can receive no more messages after the
-                            # DONE signal is returned
-                            self.return_socket.send_multipart(
-                                [to_bytes(DONE), to_bytes(DONE)])
-                            self.return_socket.recv()
+                            debug.write(first_chunk)
 
-                            # Release lock and allow other clients to connect
-                            self.lock = False
-                            self.seqs_to_process = 0
-                            self.sample_started = False
-                            print('Stop sentinel found')
+                            # If there were dummy seqs to remove before the sample,
+                            # remove from total number of seqs processed
+                            self.seqs_to_process += i
                             break
-                    stdout = self.k2proc.stdout.read(100000)
+                    continue
 
-            if self.sample_started and self.seqs_to_process > 0:
-                print('s3', self.seqs_to_process)
-                self.return_socket.send_multipart([to_bytes(NOT_DONE), to_bytes(stdout)])
-                self.return_socket.recv()
+                if self.sample_started and self.seqs_to_process <= 0:
+                    # The current stdout chunk should contain the stop sentinel
+                    # Search for it and finish up
+                    while True:
+                        if not self.sample_started:  # Get rid of self
+                            break
+                        lines = stdout.splitlines()
+                        for i, line in enumerate(lines):
+                            print('flush', i)
+                            if line.startswith('U\tEND'):
+                                print('Server: Found termination sentinel')
+                                # Include last chunk up to (and including for testing) the s=stop sentinel
+                                final_bit = '\n'.join(
+                                    lines[0: i+1])
+
+                                self.return_socket.send_multipart(
+                                    [to_bytes(NOT_DONE), to_bytes(final_bit)])
+                                self.return_socket.recv()
+                                debug.write(final_bit)
+
+                                # Client can receive no more messages after the
+                                # DONE signal is returned
+                                self.return_socket.send_multipart(
+                                    [to_bytes(DONE), to_bytes(DONE)])
+                                self.return_socket.recv()
+
+                                # Release lock and allow other clients to connect
+                                self.lock = False
+                                self.seqs_to_process = 0
+                                self.sample_started = False
+                                print('Stop sentinel found')
+                                break
+                        stdout = self.k2proc.stdout.read(100000)
+
+                if self.sample_started and self.seqs_to_process > 0:
+                    print('s3', self.seqs_to_process)
+                    debug.write(stdout)
+                    self.return_socket.send_multipart([to_bytes(NOT_DONE), to_bytes(stdout)])
+                    self.return_socket.recv()
 
     def recv(self):
         """
@@ -204,7 +209,7 @@ class Server:
         seq = msg.decode('UTF-8')
         self.k2proc.stdin.write(seq)
         self.k2proc.stdin.flush()
-        return b'Server: awaiting more chunks from the client'
+        return b'Server: Chunk received'
 
     def stop(self, sample_id: bytes) -> bytes:
         # Insert sentinel in order to determine end of sample results
