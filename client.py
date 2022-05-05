@@ -6,29 +6,29 @@ from threading import Thread
 import time
 import subprocess as sub
 
-from server import START, STOP, RUN_BATCH
+from server import START, STOP, RUN_BATCH, NOT_DONE, DONE
 from server import to_bytes as b
 from server import to_string as s
 
 
-def receive_results(port, outfile):
+def receive_results(port, outfile, sample_id):
     context = zmq.Context()
     socket = context.socket(zmq.REP)
 
     while True:
         try:
             socket.bind(f'tcp://127.0.0.1:{port}')
-        except zmq.error.ZMQError as e:
+        except zmq.error.ZMQError:
             'waiting for return socket'
         else:
             break
-    print("C.receive_results: starting")
+    print(f"f{sample_id}: receive_results thread listening")
 
     with open(outfile, 'w') as fh:
         while True:
             status, result = socket.recv_multipart()
             socket.send(b'Recevied')
-            if s(status) == 'DONE':
+            if s(status) == DONE:
                 print('Client: Received data processing complete message from '
                       'server')
                 return
@@ -43,25 +43,19 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://127.0.0.1:{send_port}")
 
-    seqkit = sub.run(
+    print(f'f{sample_id}: Getting total number of seqs to process')
+    n_seqs = sub.run(
         f"seqkit stats -T {fastq}|cut -f 4|sed -n 2p"
-        , capture_output=True, shell=True, text=True)
+        , capture_output=True, shell=True, text=True).stdout
 
-    while True:
-        numseqs = seqkit.stdout
-        if numseqs:
-            break
-        print('waitng for seqkit')
-        time.sleep(1)
-
-    print(f'{sample_id}, numseqs: {numseqs}')
+    print(f'{sample_id}: numseqs: {n_seqs}')
 
     with open(fastq, 'r') as fh:
         while True:
             # Try to get a unique lock on the server
             # Could do this is another control socket.
             # register the number of sequences to expect
-            socket.send_multipart([b(START), b(numseqs)])
+            socket.send_multipart([b(START), b(n_seqs)])
 
             lock = int(socket.recv())
 
@@ -70,7 +64,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
 
                 # Start thread for receiving input
                 recv_thread = Thread(target=receive_results,
-                                     args=(ports[1], outpath))
+                                     args=(ports[1], outpath, sample_id))
                 recv_thread.start()
                 break
             else:
