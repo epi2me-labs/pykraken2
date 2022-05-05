@@ -106,10 +106,10 @@ class Server:
             for i, line in enumerate(lines):
                 if line.startswith('U\tSTART'):
                     print('found START')
-                    # -1 includes the sentinel for testing
-                    if i < 1:
-                        i = 1
-                    first_chunk = '\n'.join(lines[i - 1:])
+                    # i -1 includes the sentinel for testing
+                    if i < 0:
+                        i = 0
+                    first_chunk = '\n'.join(lines[i:])
                     first_chunk_size = len(lines) - i
                     print(f'First chunk size {first_chunk_size}')
 
@@ -120,7 +120,6 @@ class Server:
 
     def do_final_chunk(self, result_lines):
 
-        print('fc toproc', self.seqs_to_process)
         first = True
         while True:
             if first:
@@ -175,15 +174,12 @@ class Server:
                 self.seqs_to_process -= num_result_lines
 
                 if self.seqs_to_process > 0:
-                    print('toproc', self.seqs_to_process)
                     self.return_socket.send_multipart(
                         [to_bytes(NOT_DONE), to_bytes(stdout)])
                     self.return_socket.recv()
 
                 if self.seqs_to_process <= 0:
-                    print('000000000000000')
                     self.do_final_chunk(stdout)
-                    print('lllllllllll')
                     self.seqs_to_process = 0
                     first_chunk_to_do = True
                     print('locking')
