@@ -30,7 +30,7 @@ def to_bytes(string) -> bytes:
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
 
-SENTINEL_SIZE = 5
+SENTINEL_SIZE = 50
 
 SENTINEL = (
     "@{}\n"
@@ -135,7 +135,6 @@ class Server:
                         i = 0
                     first_chunk = '\n'.join(lines[i:])
                     first_chunk_size = len(lines) - i
-                    print(f'First chunk size {first_chunk_size}')
 
                     self.return_socket.send_multipart(
                         [to_bytes(NOT_DONE), to_bytes(first_chunk)])
@@ -210,13 +209,15 @@ class Server:
                     self.return_socket.recv()
 
                 if self.seqs_to_process <= 0:
+                    print('000000000000')
                     self.do_final_chunk(stdout)
                     self.seqs_to_process = 0
                     first_chunk_to_do = True
                     print('locking')
                     self.lock = False
+                print(f'to process: {self.seqs_to_process}')
             else:
-                print('S waiting for lock', self.seqs_to_process)
+                print('Server waiting for lock')
                 time.sleep(1)
 
     def recv(self):

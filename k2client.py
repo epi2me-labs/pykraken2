@@ -84,7 +84,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
             # There wsa a suggestion to send all the reads from a sample
             # as a single message. But this would require reading the whole
             # fastq file into memory first.
-            seq = fh.read(10000)
+            seq = fh.read(100000)
 
             if seq:
                 socket.send_multipart([b(RUN_BATCH), b(seq)])
