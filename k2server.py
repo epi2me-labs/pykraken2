@@ -71,6 +71,8 @@ class Server:
 
         self.flush_seqs = "".join([DUMMYSEQ] * 100000)
 
+        # Attempts to force Kraken to write unbuffered using stdbuf
+        # did not work
         cmd = [
             'kraken2',
             '--report', 'kraken2_report.txt',
