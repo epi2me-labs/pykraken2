@@ -1,13 +1,14 @@
 #! /usr/bin/env python
-"""
 
-"""
 import time
 import argparse
-import zmq
+from typing import List
 from threading import Thread
 import subprocess as sub
 import datetime
+
+import zmq
+
 
 # Client to server signals
 START = 'start'
@@ -29,33 +30,46 @@ def to_bytes(string) -> bytes:
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
 
+SENTINEL_SIZE = 5
 
-SENTINEL_START = (
-    f"@START\n"
-    f"{'T' * 50}\n"
+SENTINEL = (
+    "@{}\n"
+    f"{'T' * SENTINEL_SIZE}\n"
     "+\n"
-    f"{'!' * 50}\n"
-)
-
-SENTINEL_END = (
-    f"@END\n"
-    f"{'T' * 50}\n"
-    "+\n"
-    f"{'!' * 50}\n"
+    f"{'!' * SENTINEL_SIZE}\n"
 )
 
 DUMMYSEQ = (
     f"@DUMMY\n"
-    f"{'T' * 50}\n"
+    f"{'T' * SENTINEL_SIZE}\n"
     "+\n"
-    f"{'!' * 50}\n"
+    f"{'!' * SENTINEL_SIZE}\n"
 )
 
 
 class Server:
-    def __init__(self, ports, kraken_db_dir, threads=24):
+    """
+    Sever
+
+    This server runs two threads:
+    Two threads:
+
+        recv_thread
+        receives messages from k2clients, and feeds sentinel-delimited
+        sequences to a kraken2 subprocess. After the STOP sentinel,
+        dummy sequences are fed into the kraken2 subprocess stdin to flush
+        out any remaining sequence results.
+
+        return_thread
+        Reads results from the kraken2 subprocess stdout and sends them back
+        to the clinet.
+
+    """
+    def __init__(self, ports, kraken_db_dir, threads=8):
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
+
+        self.flush_seqs = "".join([DUMMYSEQ] * 100000)
 
         cmd = [
             'kraken2',
@@ -101,7 +115,14 @@ class Server:
         self.return_thread.start()
 
     def do_first_chunk(self,) -> int:
+        """
+        Search for START sentinel. If processing the servers first client,
+        then this will be the first line in the kraken2 stdout.
+        If processing subsequent client connections, then there will likely
+        be dummy sequences in the stdout that we need to remove first.
 
+        :return: number of sequences from first chunk passed to kraken2 stdin
+        """
         while True:
             stdout = self.k2proc.stdout.read(100000)
             lines = stdout.splitlines()
@@ -121,8 +142,15 @@ class Server:
                     self.return_socket.recv()
                     return first_chunk_size
 
-    def do_final_chunk(self, result_lines):
+    def do_final_chunk(self, result_lines: List):
+        """
+        The number of seqs to process should now be <= 0 meaning that the
+        STOP sentinel should be in the current chunk kraken2 data
+        (result lines). Search for this and send all data before it to client
+        along with a DONE message
 
+        :param result_lines: A chunk of kraken2 results lines
+        """
         first = True
         while True:
             if first:
@@ -211,25 +239,30 @@ class Server:
         if self.lock is False:
             self.lock = True
             self.seqs_to_process = int(to_string(num_seqs))
-            self.k2proc.stdin.write(SENTINEL_START)
+            self.k2proc.stdin.write(SENTINEL.format('START'))
             reply = '1'
         else:
             reply = '0'
         return to_bytes(reply)
 
     def run_batch(self, msg: bytes) -> bytes:
+        """
+        :param msg: a chunk of sequence data
+        """
         seq = msg.decode('UTF-8')
         self.k2proc.stdin.write(seq)
         self.k2proc.stdin.flush()
         return b'Server: Chunk received'
 
     def stop(self, sample_id: bytes) -> bytes:
-        # Insert sentinel in order to determine end of sample results
-        self.k2proc.stdin.write(SENTINEL_END)
-        n_flushseqs = 100000
+        """
+        Insert STOP sentinel into kraken2 stdin.
+        Flush the buffer with some dummy seqs
+        """
+
+        self.k2proc.stdin.write(SENTINEL.format('END'))
         print('Server: flushing')
-        for i in range(n_flushseqs):  # Can we do this outside of a loop?
-            self.k2proc.stdin.write(DUMMYSEQ)
+        self.k2proc.stdin.write(self.flush_seqs)
         print("Server: All dummy seqs written")
         return to_bytes(f'Server got STOP signal from client for {sample_id}')
 

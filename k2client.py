@@ -1,14 +1,24 @@
 #! /usr/bin/env python
 
+"""
+K2client.py
+
+Main thread acquires lock from the server. Read chunks of sequence data and
+feed this to the server.
+
+recv_thread receives results back from the server, and listens for a DONE
+message before terminating.
+"""
+
 import argparse
 import zmq
 from threading import Thread
 import time
 import subprocess as sub
 
-from server import START, STOP, RUN_BATCH, NOT_DONE, DONE
-from server import to_bytes as b
-from server import to_string as s
+from k2server import START, STOP, RUN_BATCH, DONE
+from k2server import to_bytes as b
+from k2server import to_string as s
 
 
 def receive_results(port, outfile, sample_id):
@@ -53,7 +63,6 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
     with open(fastq, 'r') as fh:
         while True:
             # Try to get a unique lock on the server
-            # Could do this is another control socket.
             # register the number of sequences to expect
             socket.send_multipart([b(START), b(n_seqs)])
 
@@ -74,7 +83,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
         while True:
             # There wsa a suggestion to send all the reads from a sample
             # as a single message. But this would require reading the whole
-            # fastq file into memory first
+            # fastq file into memory first.
             seq = fh.read(10000)
 
             if seq:
