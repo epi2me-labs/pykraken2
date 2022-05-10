@@ -18,11 +18,13 @@
 
 # Compare original kraken with realtime kraken
 
-kraken2 \
+
+/mmfs1/groups/custflow/active/nhorner/kraken_build/build/kraken2 \
 --report 'kraken2_report.txt' \
 --classified-out CLASSIFIED_READS \
 --unclassified-out UNCLASSIFIED_READS \
 --db /mmfs1/groups/custflow/active/sgriffiths/metagenomics/all_refs/pig_sheep_cow_horse/kraken_db \
---threads 40 \
-/dev/fd/0 > \
-raw_kraken.tsv;
+--threads 1 \
+dev/fd/0 > \
+kraken_line_buffered.tsv;
+
