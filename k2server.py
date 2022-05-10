@@ -69,13 +69,16 @@ class Server:
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
 
-        self.flush_seqs = "".join([DUMMYSEQ] * 100000)
+        k2_readbuf_size = 1000
+        self.flush_seqs = "".join([DUMMYSEQ] * k2_readbuf_size)
 
         # Attempts to force Kraken to write unbuffered using stdbuf
         # did not work
         cmd = [
+            'stdbuf', '-oL',
             'kraken2',
             '--report', 'kraken2_report.txt',
+            '--unbuffered-output',
             '--classified-out', CLASSIFIED_READS,
             '--unclassified-out', UNCLASSIFIED_READS,
             '--db', self.kraken_db_dir,
@@ -108,7 +111,7 @@ class Server:
         self.return_socket.connect(f"tcp://127.0.0.1:5556")
 
         self.lock = False
-        self.seqs_to_process = 0
+        self.all_seqs_submitted = False
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
@@ -116,38 +119,39 @@ class Server:
         self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
 
-    def do_first_chunk(self,) -> int:
-        """
-        Search for START sentinel. If processing the servers first client,
-        then this will be the first line in the kraken2 stdout.
-        If processing subsequent client connections, then there will likely
-        be dummy sequences in the stdout that we need to remove first.
-
-        :return: number of sequences from first chunk passed to kraken2 stdin
-        """
-        while True:
-            stdout = self.k2proc.stdout.read(100000)
-            lines = stdout.splitlines()
-
-            for i, line in enumerate(lines):
-                if line.startswith('U\tSTART'):
-                    print('found START')
-                    # i -1 includes the sentinel for testing
-                    if i < 0:
-                        i = 0
-                    first_chunk = '\n'.join(lines[i:])
-                    first_chunk_size = len(lines) - i
-
-                    self.return_socket.send_multipart(
-                        [to_bytes(NOT_DONE), to_bytes(first_chunk)])
-                    self.return_socket.recv()
-                    return first_chunk_size
+    # def do_first_chunk(self,) -> int:
+    #     """
+    #     Search for START sentinel. If processing the servers first client,
+    #     then this will be the first line in the kraken2 stdout.
+    #     If processing subsequent client connections, then there will likely
+    #     be dummy sequences in the stdout that we need to remove first.
+    #
+    #     :return: number of sequences from first chunk passed to kraken2 stdin
+    #     """
+    #     while True:
+    #         stdout = self.k2proc.stdout.read(100000)
+    #         lines = stdout.splitlines()
+    #
+    #         for i, line in enumerate(lines):
+    #             if line.startswith('U\tSTART'):
+    #                 print('found START')
+    #                 # i -1 includes the sentinel for testing
+    #                 if i < 0:
+    #                     i = 0
+    #                 first_chunk = '\n'.join(lines[i:])
+    #                 first_chunk_size = len(lines) - i
+    #
+    #                 self.return_socket.send_multipart(
+    #                     [to_bytes(NOT_DONE), to_bytes(first_chunk)])
+    #                 self.return_socket.recv()
+    #                 return first_chunk_size
 
     def do_final_chunk(self, result_lines: List):
         """
-        The number of seqs to process should now be <= 0 meaning that the
-        STOP sentinel should be in the current chunk kraken2 data
-        (result lines). Search for this and send all data before it to client
+        All data has been submitted to the K2 subprocess along woth a stop
+        sentinel and dummy seqs to flush
+        The
+         Search for this and send all data before it to client
         along with a DONE message
 
         :param result_lines: A chunk of kraken2 results lines
@@ -158,15 +162,14 @@ class Server:
                 stdout = result_lines
                 first = False
             else:
-                stdout = self.k2proc.stdout.read(100000)
-            lines = stdout.splitlines()
+                stdout = self.k2proc.stdout.readlines(100)
 
-            for i, line in enumerate(lines):
+            for i, line in enumerate(stdout):
                 if line.startswith('U\tEND'):
                     print('Server: Found termination sentinel')
                     # Include last chunk up to (and including for testing) the stop sentinel
                     final_bit = '\n'.join(
-                        lines[0: i + 1])
+                        stdout[0: i + 1])
 
                     self.return_socket.send_multipart(
                         [to_bytes(NOT_DONE), to_bytes(final_bit)])
@@ -191,33 +194,27 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels
         """
-        first_chunk_to_do = True
 
         while True:
             if self.lock:  # Is a client connected?
 
-                if first_chunk_to_do:
-                    num_seqs = self.do_first_chunk()
-                    first_chunk_to_do = False
-                    self.seqs_to_process -= num_seqs
+                stdout = self.k2proc.stdout.read(100000) # Shoukd increase this?
 
-                stdout = self.k2proc.stdout.read(100000)
-                num_result_lines = stdout.count('\n')
-                self.seqs_to_process -= num_result_lines
-
-                if self.seqs_to_process > 0:
+                if self.all_seqs_submitted:
+                    print('Check for sentinel')
+                    self.do_final_chunk(stdout)
+                    self.return_socket.send_multipart(
+                        [to_bytes(DONE), to_bytes(DONE)]
+                    )
+                    self.return_socket.recv()
+                    print('locking')
+                    self.lock = False
+                else:
+                    print('Sendiing!!!!!!!!')
                     self.return_socket.send_multipart(
                         [to_bytes(NOT_DONE), to_bytes(stdout)])
                     self.return_socket.recv()
 
-                if self.seqs_to_process <= 0:
-                    print('000000000000')
-                    self.do_final_chunk(stdout)
-                    self.seqs_to_process = 0
-                    first_chunk_to_do = True
-                    print('locking')
-                    self.lock = False
-                print(f'to process: {self.seqs_to_process}')
             else:
                 print('Server waiting for lock')
                 time.sleep(1)
@@ -234,14 +231,14 @@ class Server:
             msg = getattr(self, route)(query[1])
             self.input_socket.send(msg)
 
-    def start(self, num_seqs: bytes) -> bytes:
+    def start(self, smaple_id) -> bytes:
         """
         Clients try to acquire lock on server.
         If successful, register the number of sequences to expect
         """
         if self.lock is False:
             self.lock = True
-            self.seqs_to_process = int(to_string(num_seqs))
+            self.all_seqs_submitted = False
             self.k2proc.stdin.write(SENTINEL.format('START'))
             reply = '1'
         else:
@@ -262,6 +259,9 @@ class Server:
         Insert STOP sentinel into kraken2 stdin.
         Flush the buffer with some dummy seqs
         """
+        # Is this guaranteed to be set in the next iteration
+        # of the while loop in the return_results thread?
+        self.all_seqs_submitted = True
 
         self.k2proc.stdin.write(SENTINEL.format('END'))
         print('Server: flushing')

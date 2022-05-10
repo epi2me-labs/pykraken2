@@ -53,18 +53,11 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://127.0.0.1:{send_port}")
 
-    print(f'f{sample_id}: Getting total number of seqs to process')
-    n_seqs = sub.run(
-        f"seqkit stats -T {fastq}|cut -f 4|sed -n 2p"
-        , capture_output=True, shell=True, text=True).stdout
-
-    print(f'{sample_id}: numseqs: {n_seqs}')
-
     with open(fastq, 'r') as fh:
         while True:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
-            socket.send_multipart([b(START), b(n_seqs)])
+            socket.send_multipart([b(START), b(sample_id)])
 
             lock = int(socket.recv())
 
@@ -81,10 +74,10 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
                 print(f'Waiting to get lock on server for:  {sample_id}')
 
         while True:
-            # There wsa a suggestion to send all the reads from a sample
+            # There was a suggestion to send all the reads from a sample
             # as a single message. But this would require reading the whole
             # fastq file into memory first.
-            seq = fh.read(100000)
+            seq = fh.read(100000) # Increase?
 
             if seq:
                 socket.send_multipart([b(RUN_BATCH), b(seq)])
