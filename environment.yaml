@@ -1,0 +1,7 @@
+name: krakenserver
+channels:
+    - anaconda
+    - defaults
+dependencies:
+    - python>=3.8.0
+    - pyzmq
