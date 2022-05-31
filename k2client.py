@@ -28,8 +28,9 @@ def receive_results(port, outfile, sample_id):
     while True:
         try:
             socket.bind(f'tcp://127.0.0.1:{port}')
-        except zmq.error.ZMQError:
-            'waiting for return socket'
+        except zmq.error.ZMQError as e:
+            print(f'Port in use?: Try "kill -9 `lsof -i tcp:{port}`"')
+            print(e)
         else:
             break
     print(f"f{sample_id}: receive_results thread listening")
@@ -62,7 +63,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
             lock = int(socket.recv())
 
             if lock:
-                print(f'Acquired lock on server: {sample_id}')
+                print(f'Client: Acquired lock on server: {sample_id}')
 
                 # Start thread for receiving input
                 recv_thread = Thread(target=receive_results,
@@ -71,7 +72,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
                 break
             else:
                 time.sleep(1)
-                print(f'Waiting to get lock on server for:  {sample_id}')
+                print(f'Client: Waiting to get lock on server for: {sample_id}')
 
         while True:
             # There was a suggestion to send all the reads from a sample
@@ -87,7 +88,7 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
             else:
                 socket.send_multipart([b(STOP), b(sample_id)])
                 socket.recv()
-                print('Client sending finished')
+                print('Client: sending finished')
                 break
 
 

@@ -162,7 +162,7 @@ class Server:
                     [to_bytes(DONE), to_bytes(DONE)])
                 self.return_socket.recv()
 
-                print('Stop sentinel found')
+                print('server: Stop sentinel found')
                 return
 
     def return_results(self):
@@ -187,9 +187,9 @@ class Server:
                             break
 
                 if self.all_seqs_submitted:
-                    print('Checking for sentinel')
+                    print('Server: Checking for sentinel')
                     self.do_final_chunk()
-                    print('releasing lock')
+                    print('Server: releasing lock')
                     self.lock = False
                     continue
 
