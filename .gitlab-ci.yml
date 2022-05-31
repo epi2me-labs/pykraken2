@@ -6,6 +6,9 @@ include:
     - project: "epi2melabs/ci-templates"
       file: "snippets.yaml"
 
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
 image: ${UBUNTUIMAGE}:20.04
 
 .prep-image: &prep-image |
