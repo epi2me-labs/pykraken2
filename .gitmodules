@@ -1,0 +1,3 @@
+[submodule "kraken2"]
+	path = kraken2
+	url = git@github.com:DerrickWood/kraken2.git
