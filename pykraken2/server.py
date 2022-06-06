@@ -1,5 +1,3 @@
-#! /usr/bin/env python
-
 import time
 import argparse
 from threading import Thread
@@ -43,7 +41,7 @@ SENTINEL = (
 
 class Server:
     """
-    Sever
+    Server
 
     This server runs two threads:
 
@@ -257,14 +255,21 @@ class Server:
         return to_bytes(f'Server got STOP signal from client for {sample_id}')
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+def main(args):
+    """Entry point to run a kraken2 server."""
+    # TODO: the server shouldn't just start itself
+    server = Server(args.ports, args.database, args.k2_binary, args.threads)
+
+
+def argparser():
+    """Argument parser for entrypoint."""
+    parser = argparse.ArgumentParser(
+        "kraken2 server",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        add_help=False)
+    parser.add_argument('database')
+    # TODO: we only seem to use one port.
     parser.add_argument('--ports', nargs='+')
-    parser.add_argument('--db')
     parser.add_argument('--threads', default=8)
     parser.add_argument('--k2-binary', default='kraken2')
-    args = parser.parse_args()
-    Server(args.ports, args.db, args.k2_binary, args.threads)
-
-
-
+    return parser

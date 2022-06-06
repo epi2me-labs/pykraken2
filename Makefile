@@ -10,7 +10,7 @@ venv/bin/activate:
 	${IN_VENV} && pip install -r requirements.txt
 
 develop: venv/bin/activate
-	${IN_VENV} && python setup.py develop
+	${IN_VENV} && pip install -e .
 
 test: venv/bin/activate
 	${IN_VENV} && pip install flake8 flake8-rst-docstrings flake8-docstrings flake8-import-order flake8-forbid-visual-indent

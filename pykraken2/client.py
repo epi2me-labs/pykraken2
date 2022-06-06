@@ -1,5 +1,3 @@
-#! /usr/bin/env python
-
 """
 K2client.py
 
@@ -16,12 +14,13 @@ from threading import Thread
 import time
 import subprocess as sub
 
-from k2server import START, STOP, RUN_BATCH, DONE
-from k2server import to_bytes as b
-from k2server import to_string as s
+from pykraken2.server import START, STOP, RUN_BATCH, DONE
+from pykraken2.server import to_bytes as b
+from pykraken2.server import to_string as s
 
 
 def receive_results(port, outfile, sample_id):
+    """Worker to receive results."""
     context = zmq.Context()
     socket = context.socket(zmq.REP)
 
@@ -47,7 +46,8 @@ def receive_results(port, outfile, sample_id):
             fh.flush()
 
 
-def main(ports, fastq: str, outpath: str, sample_id: str):
+def run_client(ports, fastq: str, outpath: str, sample_id: str):
+    """Create and run a client."""
 
     send_port, recv_port = ports
     context = zmq.Context()
@@ -92,13 +92,21 @@ def main(ports, fastq: str, outpath: str, sample_id: str):
                 break
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+def main(args):
+    """Entry point to run a kraken2 client."""
+    run_client(args.ports, args.fastq, args.out, args.sample_id)
+
+
+def argparser():
+    """Argument parser for entrypoint."""
+    parser = argparse.ArgumentParser(
+        "kraken2 client",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        add_help=False)
+    # TODO: server port should be required argument, the second
+    # port isn't a concern for the user.
     parser.add_argument("--ports", nargs='+')
     parser.add_argument("--fastq")
     parser.add_argument("--out")
     parser.add_argument("--sample_id")
-
-    args = parser.parse_args()
-    main(args.ports, args.fastq, args.out, args.sample_id)
-
+    return parser

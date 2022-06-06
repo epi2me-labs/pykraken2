@@ -5,3 +5,4 @@ channels:
 dependencies:
     - python>=3.8.0
     - pyzmq
+    - epi2melabs::kraken2
