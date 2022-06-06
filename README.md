@@ -26,3 +26,12 @@ to the `bin` directory of the virtual environment.
 Usage
 -----
 
+Two entry points are provided:
+
+    pykraken2 server
+
+to run a kraken2 service to classify reads, and
+
+    pykraken2 client
+
+to send read data to the service and receive results.
