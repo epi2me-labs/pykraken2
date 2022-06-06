@@ -20,8 +20,8 @@ kraken2: venv/bin/activate
 .PHONY: test
 test: venv/bin/activate
 	${IN_VENV} && pip install flake8 flake8-rst-docstrings flake8-docstrings flake8-import-order flake8-forbid-visual-indent
-	${IN_VENV} && flake8 kraken_server \
-		--import-order-style google --application-import-names kraken_server \
+	${IN_VENV} && flake8 pykraken2 \
+		--import-order-style google --application-import-names pykraken2 \
 		--statistics
 	# we should install without error
 	${IN_VENV} && python setup.py install

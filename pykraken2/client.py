@@ -118,8 +118,8 @@ def argparser():
         help="")
     parser.add_argument(
         "--out",
-        help="".)
+        help="")
     parser.add_argument(
-        "--sample_id", default="no_sample"
+        "--sample_id", default="no_sample",
         help="")
     return parser
