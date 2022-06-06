@@ -3,6 +3,11 @@
 # Copyright 2013-2021, Derrick Wood <dwood@cs.jhu.edu>
 #
 # This file is part of the Kraken 2 taxonomic sequence classification system.
+#
+#
+# Modified by cwright for use in pykraken2. This version always uses the CMakeLists
+# to build the project since the included Make files assume various things about
+# the build environment.
 
 set -e
 
@@ -27,8 +32,6 @@ export KRAKEN2_DIR=$(perl -MCwd=abs_path -le 'print abs_path(shift)' "$1")
 
 mkdir -p "$KRAKEN2_DIR"
 
-
-#make -C src install
 rm -rf build
 mkdir build 
 cd build 
@@ -48,18 +51,5 @@ do
   if [ -x "$file" ]
   then
     chmod +x "$KRAKEN2_DIR/$(basename $file)"
-  fi
-done
-
-echo
-echo "Kraken 2 installation complete."
-echo
-echo "To make things easier for you, you may want to copy/symlink the following"
-echo "files into a directory in your PATH:"
-for file in $KRAKEN2_DIR/kraken2*
-do
-  if [ -x "$file" ]
-  then
-    echo "  $file"
   fi
 done
