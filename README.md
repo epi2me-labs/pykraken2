@@ -16,11 +16,11 @@ pykraken2 is best installed with conda/mamba:
 For the purposes of development the Python components of pykraken2 can be installed
 using an in-place (editable) install:
 
-    pip install -e .
+    make develop
 
-`kraken2` is included as a git submodule. It should be built and added to `PATH`
-for use by the Python components.
-
+This will make a virtual environment at `./venv` and create and inpalce (editable)
+install of the Python code, along with compiling `kraken2` and copying the executables
+to the `bin` directory of the virtual environment.
 
 
 Usage
