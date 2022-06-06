@@ -1,17 +1,23 @@
-.PHONY: develop docs
-
 PYTHON ?= python3
 
 IN_VENV=. ./venv/bin/activate
 
 venv/bin/activate:
-	test -d venv || $(PYTHON) -m venv venv
+	test -d venv || $(PYTHON) -m venv venv --prompt pykraken2
 	${IN_VENV} && pip install pip --upgrade
 	${IN_VENV} && pip install -r requirements.txt
 
-develop: venv/bin/activate
+.PHONY: develop
+develop: venv/bin/activate kraken2
 	${IN_VENV} && pip install -e .
 
+
+.PHONY: kraken2
+kraken2: venv/bin/activate
+	cd kraken2 && ../install_kraken2.sh ../venv/bin
+
+
+.PHONY: test
 test: venv/bin/activate
 	${IN_VENV} && pip install flake8 flake8-rst-docstrings flake8-docstrings flake8-import-order flake8-forbid-visual-indent
 	${IN_VENV} && flake8 kraken_server \
