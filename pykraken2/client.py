@@ -14,7 +14,8 @@ from threading import Thread
 import time
 import subprocess as sub
 
-from pykraken2.server import START, STOP, RUN_BATCH, DONE
+from pykraken2 import _log_level
+from pykraken2.server import KrakenSignals
 from pykraken2.server import to_bytes as b
 from pykraken2.server import to_string as s
 
@@ -26,6 +27,7 @@ def receive_results(port, outfile, sample_id):
 
     while True:
         try:
+            # TODO: should be an arbitrary server
             socket.bind(f'tcp://127.0.0.1:{port}')
         except zmq.error.ZMQError as e:
             print(f'Port in use?: Try "kill -9 `lsof -i tcp:{port}`"')
@@ -38,7 +40,7 @@ def receive_results(port, outfile, sample_id):
         while True:
             status, result = socket.recv_multipart()
             socket.send(b'Recevied')
-            if s(status) == DONE:
+            if s(status) == KrakenSignals.DONE:
                 print('Client: Received data processing complete message from '
                       'server')
                 return
@@ -52,13 +54,14 @@ def run_client(ports, fastq: str, outpath: str, sample_id: str):
     send_port, recv_port = ports
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
+    # TODO: should be arbitrary server
     socket.connect(f"tcp://127.0.0.1:{send_port}")
 
     with open(fastq, 'r') as fh:
         while True:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
-            socket.send_multipart([b(START), b(sample_id)])
+            socket.send_multipart([b(KrakenSignals.START), b(sample_id)])
 
             lock = int(socket.recv())
 
@@ -67,7 +70,7 @@ def run_client(ports, fastq: str, outpath: str, sample_id: str):
 
                 # Start thread for receiving input
                 recv_thread = Thread(target=receive_results,
-                                     args=(ports[1], outpath, sample_id))
+                                     args=(recv_port, outpath, sample_id))
                 recv_thread.start()
                 break
             else:
@@ -78,15 +81,17 @@ def run_client(ports, fastq: str, outpath: str, sample_id: str):
             # There was a suggestion to send all the reads from a sample
             # as a single message. But this would require reading the whole
             # fastq file into memory first.
+            # TODO: better to send a fixed number of lines, even one record
+            #       at a time?
             seq = fh.read(100000) # Increase?
 
             if seq:
-                socket.send_multipart([b(RUN_BATCH), b(seq)])
+                socket.send_multipart([b(KrakenSignals.RUN_BATCH), b(seq)])
                 # It is required to receive with the REQ/REP pattern, even
                 # if the msg is not used
                 socket.recv()
             else:
-                socket.send_multipart([b(STOP), b(sample_id)])
+                socket.send_multipart([b(KrakenSignals.STOP), b(sample_id)])
                 socket.recv()
                 print('Client: sending finished')
                 break
@@ -102,11 +107,19 @@ def argparser():
     parser = argparse.ArgumentParser(
         "kraken2 client",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        add_help=False)
+        parents=[_log_level()], add_help=False)
     # TODO: server port should be required argument, the second
     # port isn't a concern for the user.
-    parser.add_argument("--ports", nargs='+')
-    parser.add_argument("--fastq")
-    parser.add_argument("--out")
-    parser.add_argument("--sample_id")
+    parser.add_argument(
+        "fastq")
+    parser.add_argument(
+        "--ports", default=[5560, 5561],
+        nargs='+',
+        help="")
+    parser.add_argument(
+        "--out",
+        help="".)
+    parser.add_argument(
+        "--sample_id", default="no_sample"
+        help="")
     return parser

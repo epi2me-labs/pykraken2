@@ -1,5 +1,6 @@
 import time
 import argparse
+from enum import Enum
 from threading import Thread
 import subprocess as sub
 import datetime
@@ -7,18 +8,18 @@ import datetime
 import zmq
 
 
-# Client to server signals
-START = 'start'
-STOP = 'stop'
-RUN_BATCH = 'run_batch'
+from pykraken2 import _log_level
 
-# Server to client signals
-NOT_DONE = 'notdone'
-DONE = 'done'
 
-FULL_OUTPUT = 'all_kraken2_output'
-CLASSIFIED_READS = 'kraken2.classified.fastq'
-UNCLASSIFIED_READS = 'kraken2.unclassified.fastq'
+class KrakenSignals(Enum):
+    # client to server
+    START = 1
+    STOP = 2
+    RUN_BATCH = 3
+    # server to client
+    NOT_DONE = 50
+    DONE = 51
+
 
 
 def to_bytes(string) -> bytes:
@@ -27,16 +28,6 @@ def to_bytes(string) -> bytes:
 
 def to_string(bytes_) -> str:
     return bytes_.decode('UTF-8')
-
-
-SENTINEL_SIZE = 50
-
-SENTINEL = (
-    "@{}\n"
-    f"{'T' * SENTINEL_SIZE}\n"
-    "+\n"
-    f"{'!' * SENTINEL_SIZE}\n"
-)
 
 
 class Server:
@@ -56,34 +47,39 @@ class Server:
         to the client.
 
     """
+    FULL_OUTPUT = 'all_kraken2_output'
+    CLASSIFIED_READS = 'kraken2.classified.fastq'
+    UNCLASSIFIED_READS = 'kraken2.unclassified.fastq'
+    FAKE_SEQUENCE_LENGTH = 50
+    K2_READBUF_SIZE = 20  # TODO: is this tied to kraken2 executable?
+
     def __init__(self, ports, kraken_db_dir, k2_binary, threads):
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
 
-        k2_readbuf_size = 20
-        nuc = 'T' * SENTINEL_SIZE
-        qual = '!' * SENTINEL_SIZE
-
-        d = (
-            "@DUMMY_{}\n"
-            "{}\n"
+        self.fake_sequence = (
+            "@{}\n"
+            f"{'T' * self.SENTINEL_SIZE}\n"
             "+\n"
-            "{}\n"
-        )
+            f"{'!' * self.SENTINEL_SIZE}\n")
+
         self.flush_seqs = "".join([
-            d.format(x, nuc, qual) for x in range(k2_readbuf_size)])
+            d.format(f"DUMMY_{x}")
+            for x in range(self.K2_READBUF_SIZE)])
 
         # --batch-size sets number of reads that kraken will process before
         # writing results
         print('k2 binary', k2_binary)
 
+        # TODO: outputs should go to a temp. directory that we clean up
+        #       maybe as optional argument to ease logging/debugging.
         cmd = [
             'stdbuf', '-oL',
             k2_binary,
             '--report', 'kraken2_report.txt',
             '--unbuffered-output',
-            '--classified-out', CLASSIFIED_READS,
-            '--unclassified-out', UNCLASSIFIED_READS,
+            '--classified-out', self.CLASSIFIED_READS,
+            '--unclassified-out', self.UNCLASSIFIED_READS,
             '--db', self.kraken_db_dir,
             '--threads', str(threads),
             '--batch-size', str(k2_readbuf_size),
@@ -151,13 +147,14 @@ class Server:
 
                 final_bit = "".join(lines)
                 self.return_socket.send_multipart(
-                    [to_bytes(NOT_DONE), to_bytes(final_bit)])
+                    [to_bytes(KrakenSignals.NOT_DONE), to_bytes(final_bit)])
                 self.return_socket.recv()
 
                 # Client can receive no more messages after the
                 # DONE signal is returned
+                # TODO: why are we sending the a list?
                 self.return_socket.send_multipart(
-                    [to_bytes(DONE), to_bytes(DONE)])
+                    [to_bytes(KrakenSignals.DONE), to_bytes(KrakenSignals.DONE)])
                 self.return_socket.recv()
 
                 print('server: Stop sentinel found')
@@ -180,7 +177,8 @@ class Server:
                     # samples
                     while True:
                         line = self.k2proc.stdout.readline()
-                        if line.startswith('U\tSTART'):
+                        # TODO: Don't hardcode this
+                        if line.startswith(f'U\tSTART'):
                             self.starting_sample = False
                             break
 
@@ -192,10 +190,11 @@ class Server:
                     continue
 
                 # Send kraken enough reads so it will spit results out
+                # TODO: don't hardcode 10000
                 stdout = self.k2proc.stdout.read(10000)
 
                 self.return_socket.send_multipart(
-                    [to_bytes(NOT_DONE), to_bytes(stdout)])
+                    [to_bytes(KrakenSignals.NOT_DONE), to_bytes(stdout)])
                 self.return_socket.recv()
 
             else:
@@ -220,7 +219,8 @@ class Server:
 
         """
         if self.lock is False:
-            self.k2proc.stdin.write(SENTINEL.format('START'))
+            # TODO: don't hardcode the sequence name
+            self.k2proc.stdin.write(self.fake_sequence.format('START'))
             self.starting_sample = True
             self.all_seqs_submitted = False
             self.lock = True  # Starts sending results back
@@ -248,7 +248,9 @@ class Server:
         self.all_seqs_submitted = True
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
-        self.k2proc.stdin.write(SENTINEL.format('END'))
+
+        # TODO: don't hardcode the sequence name
+        self.k2proc.stdin.write(self.fake_sequence.format('END'))
         print('Server: flushing')
         self.k2proc.stdin.write(self.flush_seqs)
         print("Server: All dummy seqs written")
@@ -266,7 +268,7 @@ def argparser():
     parser = argparse.ArgumentParser(
         "kraken2 server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        add_help=False)
+        parents=[_log_level()], add_help=False)
     parser.add_argument('database')
     # TODO: we only seem to use one port.
     parser.add_argument('--ports', nargs='+')
