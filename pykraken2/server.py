@@ -211,8 +211,6 @@ class Server:
             else:
                 print('Server: waiting for lock')
                 time.sleep(1)
-            # TODO: Check for server close signal (whatever that will be)
-            # ANd do context.term()
 
     def recv(self):
         """
@@ -220,7 +218,7 @@ class Server:
         the appropriate functions.
         """
         print('Server: Waiting for connections')
-        while True:
+        while self.active:
             query = self.input_socket.recv_multipart()
             route = KrakenSignals(query[0]).name.lower()
             msg = getattr(self, route)(query[1])
@@ -276,11 +274,13 @@ class Server:
         self.return_socket.close()
         self.context.term()
 
+
 def main(args):
     """Entry point to run a kraken2 server."""
     # TODO: the server shouldn't just start itself
     server = Server(args.ports, args.database, args.k2_binary, args.threads)
     server.run()
+
 
 def argparser():
     """Argument parser for entrypoint."""

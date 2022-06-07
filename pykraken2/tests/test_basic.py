@@ -19,12 +19,11 @@ class SimpleTest(unittest.TestCase):
         # TODO: need a test database and fastq
         data_dir = Path(__file__).parent / 'test_data'
         self.outdir = data_dir / 'output'
-        self.out1 = self.outdir / 'test1.tsv'
-        self.out2 = self.outdir / 'test2.tsv'
         self.database = data_dir / 'db'
-        self.fastq1 = data_dir / 'reads.fastq'
-        self.correct_output = data_dir / 'correct_output' / 'k2_out.tsv'
-        self.fastq2 = self.fastq1
+        self.fastq1 = data_dir / 'reads1.fq'
+        self.fastq2 = data_dir / 'reads2.fq'
+        self.correct1 = data_dir / 'correct_output' / 'k2out1.tsv'
+        self.correct2 = data_dir / 'correct_output' / 'k2out2.tsv'
         self.ports = [5555, 5556]
         self.address = '127.0.0.1'
         self.k2_binary = Path(
@@ -61,10 +60,10 @@ class SimpleTest(unittest.TestCase):
 
         # Put the running of the client and the collection of the yielded
         # results onto the same thread.
-        def tester(sample_id, results):
-            client = Client(self.address, self.ports, self.out1, sample_id)
+        def tester(sample_id, input_, results):
+            client = Client(self.address, self.ports, input_, sample_id)
             print('tester')
-            for chunk in client.process_fastq(self.fastq1):
+            for chunk in client.process_fastq(input_):
                 results.extend(chunk)
 
         server = Server(
@@ -72,41 +71,29 @@ class SimpleTest(unittest.TestCase):
         server_thread = Thread(target=server.run)
         server_thread.start()
 
-        test_one_results = []
-        client1_thread = Thread(target=tester, args=('1', test_one_results))
-        client1_thread.start()
+        client_data = [
+            ['1', self.fastq1, self.correct1, []],
+            ['2', self.fastq2, self.correct2, []]
+        ]
 
+        for cdata in client_data:
+            thread = Thread(target=tester, args=(cdata[0], cdata[1], cdata[3]))
+            cdata.append(thread)
+            thread.start()
 
-        test_two_results = []
-        client2_thread = Thread(target=tester, args=('2', test_two_results))
-        client2_thread.start()
-
-        client1_thread.join()
-        client1_thread.join()
+        for t in client_data:
+            t[4].join()
 
         # Compare the outputs
-        with open(self.correct_output, 'r') as corr_fh:
-            corr_line = corr_fh.readlines()
-            corr_str = ''.join(corr_line)
+        for t in client_data:
+            with open(t[2], 'r') as corr_fh, open(f'temp{t[0]}.tsv', 'w') as fh2:
+                corr_line = corr_fh.readlines()
+                corr_str = ''.join(corr_line)
 
-            clinet1_str = ''.join(test_one_results)
-            self.assertEquals(corr_str, clinet1_str)
+                clinet_str = ''.join(t[3])
+                fh2.write(clinet_str)
+                self.assertEquals(corr_str, clinet_str)
 
-
-
-        # client2 = Client(self.ports, self.out2, sample_id='2')
-        # client2_thread = Thread(target=client2.process_fastq,
-        #                         args=(self.fastq2,))
-        # client2_thread.start()
+        server.terminate()
 
 
-
-
-
-
-
-        # server.terminate()
-
-
-        self.assertTrue(filecmp.cmp(self.out1, self.correct_output))
-        self.assertTrue(filecmp.cmp(self.out2, self.correct_output))
