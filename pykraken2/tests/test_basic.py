@@ -2,19 +2,20 @@ import copy
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
-from pykraken2.server import Server
-from pykraken2.client import Client
+from pykraken2.k2server import Server
+from pykraken2.k2client import Client
 
 class SimpleTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(self):
         # TODO: need a test database and fastq
-        data_dir os.path.dirname(__file__)
-        self.database = os.path.join(data_dir, 'small_db')
-        self.fastq1 = os.path.join(data_dir, 'reads1.fastq')
-        self.fastq2 = os.path.join(data_dir, 'reads2.fastq')
+        data_dir = Path(__file__).parent / 'test_data'
+        self.database = data_dir / 'db'
+        self.fastq1 = data_dir / 'reads.fastq'
+        self.fastq2 = self.fastq1
         self.ports = [5555, 5556]
 
     def test_001_create_server(self):
@@ -25,7 +26,7 @@ class SimpleTest(unittest.TestCase):
 
     def test_010_process_fastq(self):
         server= Server()
-        client = client()
+        client = Client()
 
         server.start()
         results = list(client.process_fastq(self.fastq1))
