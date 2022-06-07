@@ -26,6 +26,7 @@ class SimpleTest(unittest.TestCase):
         self.correct_output = data_dir / 'correct_output' / 'k2_out.tsv'
         self.fastq2 = self.fastq1
         self.ports = [5555, 5556]
+        self.address = '127.0.0.1'
         self.k2_binary = Path(
             __file__).parent.parent / 'bin' / 'kraken2_linux' / 'kraken2'
 
@@ -41,14 +42,15 @@ class SimpleTest(unittest.TestCase):
     #         self.skipTest(f"Kraken binary not working\n {e}")
     #     else:
     #         self.assertTrue(True)
-
-
+    # def test_001_create_server(self):
+    #     server = Server()
+    #
     # def test_002_create_client(self):
-    #     client = Client(self.ports, self.out1, sample_id=1)
+    #     client = Client()
     #
     # def test_010_process_fastq(self):
-    #     client = Client(self.ports, self.out2, sample_id=2)
-    #     client.process_fastq(self.fastq2)
+    #     server= Server()
+    #     client = client()
     #
     #     server.start()
     #     results = list(client.process_fastq(self.fastq1))
@@ -56,25 +58,47 @@ class SimpleTest(unittest.TestCase):
     #     assert False
 
     def test_020_multi_client(self):
-        server = Server(self.ports, self.database, self.k2_binary, threads=4)
+
+        def tester(sample_id, results):
+            client = Client(self.address, self.ports, self.out1, sample_id)
+            print('tester')
+            for chunk in client.process_fastq(self.fastq1):
+                results.extend(chunk)
+
+        server = Server(
+            self.address, self.ports, self.database, self.k2_binary, 4)
         server_thread = Thread(target=server.run)
-
-        client1 = Client(self.ports, self.out1, sample_id='1')
-        client1_thread = Thread(target=client1.process_fastq,
-                                args=(self.fastq1,))
-        client1_thread.start()
-
-        client2 = Client(self.ports, self.out2, sample_id='2')
-        client2_thread = Thread(target=client2.process_fastq,
-                                args=(self.fastq2,))
-        client2_thread.start()
-
         server_thread.start()
 
+        test_one_results = []
+        client1_thread = Thread(target=tester, args=('1', test_one_results))
+        client1_thread.start()
+        print('clinet1')
         client1_thread.join()
-        client2_thread.join()
 
-        server.terminate()
+
+        with open(self.correct_output, 'r') as corr_fh:
+            corr_line = corr_fh.readlines()
+            corr_str = ''.join(corr_line)
+
+            clinet1_str = ''.join(test_one_results)
+            self.assertEquals(corr_str, clinet1_str)
+
+
+
+        # client2 = Client(self.ports, self.out2, sample_id='2')
+        # client2_thread = Thread(target=client2.process_fastq,
+        #                         args=(self.fastq2,))
+        # client2_thread.start()
+
+
+
+
+
+
+
+        # server.terminate()
+
 
         self.assertTrue(filecmp.cmp(self.out1, self.correct_output))
         self.assertTrue(filecmp.cmp(self.out2, self.correct_output))

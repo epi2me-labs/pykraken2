@@ -52,13 +52,28 @@ class Server:
     FAKE_SEQUENCE_LENGTH = 50
     K2_READBUF_SIZE = 20  # TODO: is this tied to kraken2 executable?
 
-    def __init__(self, ports, kraken_db_dir, k2_binary, threads):
+    def __init__(self, address, ports, kraken_db_dir, k2_binary, threads):
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
         self.k2_binary = k2_binary
         self.threads = threads
+        self.address = address
         self.ports = ports
         self.active = True
+
+        self.input_socket = self.context.socket(zmq.REP)
+        self.return_socket = self.context.socket(zmq.REQ)
+
+        self.recv_thread = None
+        self.return_thread = None
+        self.k2proc = None
+
+        # If a client is connected, lock prevents other connections
+        self.lock = False
+        # Have all seqs from current sample been passed to kraken
+        self.all_seqs_submitted = False
+        # Are we waiting for processing of a sample to start
+        self.starting_sample = True
 
         self.fake_sequence = (
             "@{}\n"
@@ -109,22 +124,12 @@ class Server:
         delta = end - start
         print(f'Kraken database loading duration: {delta}')
 
-        self.input_socket = self.context.socket(zmq.REP)
-
         try:
-            self.input_socket.bind(f'tcp://127.0.0.1:{self.ports[0]}')
+            self.input_socket.bind(f'tcp://{self.address}:{self.ports[0]}')
         except zmq.error.ZMQError:
             exit(f'Sever: Port in use: Do "kill -9 `lsof -i tcp:{self.ports[0]}`"')
 
-        self.return_socket = self.context.socket(zmq.REQ)
-        self.return_socket.connect(f"tcp://127.0.0.1:{self.ports[1]}")
-
-        # If a client is connected, lock prevents other connections
-        self.lock = False
-        # Have all seqs from current sample been passed to kraken
-        self.all_seqs_submitted = False
-        # Are we waiting for processing of a sample to start
-        self.starting_sample = True
+        self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()

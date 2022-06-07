@@ -17,47 +17,55 @@ import subprocess as sub
 from pykraken2 import _log_level
 from pykraken2.server import KrakenSignals
 from pykraken2.server import to_bytes as b
-from pykraken2.server import to_string as s
 
 
 class Client:
 
-    def __init__(self, ports, outpath: str, sample_id: str):
+    def __init__(self, address, ports, outpath: str, sample_id: str):
         """Create and run a client."""
 
+        self.address = address
         self.send_port, self.recv_port = ports
         self.sample_id = sample_id
         self.outpath = outpath
+        self.context = zmq.Context()
 
     def process_fastq(self, fastq):
 
-        context = zmq.Context()
-        socket = context.socket(zmq.REQ)
+        send_socket = self.context.socket(zmq.REQ)
         # TODO: should be arbitrary server
-        socket.connect(f"tcp://127.0.0.1:{self.send_port}")
+        send_socket.connect(f"tcp://{self.address}:{self.send_port}")
+
+        while True:
+            # Try to get a unique lock on the server
+            # register the number of sequences to expect
+            send_socket.send_multipart(
+                [KrakenSignals.START.value, b(self.sample_id)])
+
+            lock = int(send_socket.recv())
+
+            if lock:
+                print(f'Client: Acquired lock on server: {self.sample_id}')
+
+                # Start thread for receiving input
+                # TODO: we shouldn't write results to file but yield to caller
+                # OK, will do once tests working
+                break
+            else:
+                time.sleep(1)
+                print(f'Client: Waiting to get lock on server for:'
+                      f'{self.sample_id}')
+
+        send_thread = Thread(
+            target=self._send_worker, args=(fastq, send_socket))
+        send_thread.start()
+
+        for chunk in self._receiver():
+            yield chunk
+
+    def _send_worker(self, fastq, socket):
 
         with open(fastq, 'r') as fh:
-            while True:
-                # Try to get a unique lock on the server
-                # register the number of sequences to expect
-                socket.send_multipart([KrakenSignals.START.value, b(self.sample_id)])
-
-                lock = int(socket.recv())
-
-                if lock:
-                    print(f'Client: Acquired lock on server: {self.sample_id}')
-
-                    # Start thread for receiving input
-                    # TODO: we shouldn't write results to file but yield to caller
-                    # OK, will do once tests working
-                    recv_thread = Thread(target=self._receive_worker,
-                                         args=(self.recv_port, self.outpath, self.sample_id))
-                    recv_thread.start()
-                    break
-                else:
-                    time.sleep(1)
-                    print(f'Client: Waiting to get lock on server for: {self.sample_id}')
-
             while True:
                 # There was a suggestion to send all the reads from a sample
                 # as a single message. But this would require reading the whole
@@ -66,50 +74,50 @@ class Client:
                 #       at a time?
                 # NEil: I thought sending single records at a time would slow
                 # things down, but I will test this.
-                seq = fh.read(100000) # Increase?
+                seq = fh.read(100000)  # Increase?
 
                 if seq:
-                    socket.send_multipart([KrakenSignals.RUN_BATCH.value, b(seq)])
+                    socket.send_multipart(
+                        [KrakenSignals.RUN_BATCH.value, b(seq)])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
                     socket.recv()
                 else:
-                    socket.send_multipart([KrakenSignals.STOP.value, b(self.sample_id)])
+                    socket.send_multipart(
+                        [KrakenSignals.STOP.value, b(self.sample_id)])
                     socket.recv()
                     print('Client: sending finished')
                     socket.close()
-                    context.term()
                     break
 
-    def _receive_worker(self, port, outfile, sample_id):
+    def _receiver(self):
         """Worker to receive results."""
-        context = zmq.Context()
+        context = self.context
         socket = context.socket(zmq.REP)
 
         while True:
             try:
                 # TODO: should be an arbitrary server
-                socket.bind(f'tcp://127.0.0.1:{port}')
+                socket.bind(f'tcp://{self.address}:{self.recv_port}')
             except zmq.error.ZMQError as e:
-                print(f'Client: Port in use?: Try "kill -9 `lsof -i tcp:{port}`"')
+                print(f'Client: Port in use?: '
+                      f'Try "kill -9 `lsof -i tcp:{self.recv_port}`"')
                 print(e)
             else:
                 break
             time.sleep(1)
-        print(f"f{sample_id}: receive_results thread listening")
+        print(f"{self.sample_id}: receive_results thread listening")
 
-        with open(outfile, 'w') as fh:
-            while True:
-                status, result = socket.recv_multipart()
-                socket.send(b'Recevied')
-                if status == KrakenSignals.DONE.value:
-                    print('Client: Received data processing complete message from '
-                          'server')
-                    socket.close()
-                    context.term()
-                    return
-                fh.write(result.decode('UTF-8'))
-                fh.flush()
+        while True:
+            status, result = socket.recv_multipart()
+            socket.send(b'Recevied')
+            if status == KrakenSignals.DONE.value:
+                print('Client: '
+                      'Received data processing complete message')
+                socket.close()
+                context.term()
+                return
+            yield result.decode('UTF-8')
 
 
 def main(args):
