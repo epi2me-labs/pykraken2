@@ -1,17 +1,20 @@
-import time
-import argparse
-from enum import Enum
-from threading import Thread
-import subprocess as sub
-import datetime
+"""pykraken2 server module."""
 
+
+import argparse
+import datetime
+from enum import Enum
+import subprocess as sub
+from threading import Thread
+import time
+
+from pykraken2 import _log_level
 import zmq
 
 
-from pykraken2 import _log_level
-
-
 class KrakenSignals(Enum):
+    """Client/Sever communication enum."""
+
     # client to server
     START = b'1'
     STOP = b'2'
@@ -22,16 +25,18 @@ class KrakenSignals(Enum):
 
 
 def to_bytes(string) -> bytes:
+    """Encode strings."""
     return string.encode('UTF-8')
 
 
 def to_string(bytes_) -> str:
+    """Decode strings."""
     return bytes_.decode('UTF-8')
 
 
 class Server:
     """
-    Server
+    Server class.
 
     This server runs two threads:
 
@@ -46,6 +51,7 @@ class Server:
         to the client.
 
     """
+
     FULL_OUTPUT = 'all_kraken2_output'
     CLASSIFIED_READS = 'kraken2.classified.fastq'
     UNCLASSIFIED_READS = 'kraken2.unclassified.fastq'
@@ -53,6 +59,15 @@ class Server:
     K2_READBUF_SIZE = 20  # TODO: is this tied to kraken2 executable?
 
     def __init__(self, address, ports, kraken_db_dir, k2_binary, threads):
+        """
+        Sever constructor.
+
+        :param address: server ip
+        :param ports: [input port, output port]
+        :param kraken_db_dir: path to kraken2 database directory
+        :param k2_binary: path to kraken2 binary
+        :param threads: cpus to use
+        """
         self.kraken_db_dir = kraken_db_dir
         self.context = zmq.Context()
         self.k2_binary = k2_binary
@@ -90,7 +105,7 @@ class Server:
         print('k2 binary', k2_binary)
 
     def run(self):
-
+        """Start the server."""
         # TODO: outputs should go to a temp. directory that we clean up
         #       maybe as optional argument to ease logging/debugging.
         cmd = [
@@ -127,7 +142,9 @@ class Server:
         try:
             self.input_socket.bind(f'tcp://{self.address}:{self.ports[0]}')
         except zmq.error.ZMQError:
-            exit(f'Sever: Port in use: Do "kill -9 `lsof -i tcp:{self.ports[0]}`"')
+            exit(
+                f'Sever: Port in use: '
+                f'Try "kill -9 `lsof -i tcp:{self.ports[0]}`"')
 
         self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
 
@@ -139,12 +156,13 @@ class Server:
 
     def do_final_chunk(self):
         """
+        Process the final chunk of data from a sample.
+
         All data has been submitted to the K2 subprocess along with a stop
         sentinel and dummy seqs to flush.
         Search for this sentinel and send all lines before it to the client
-        along with a DONE message
+        along with a DONE message.
         """
-
         lines = []
         while self.active:
 
@@ -180,7 +198,6 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels.
         """
-
         while self.active:
             if self.lock:  # Is a client connected?
                 if self.starting_sample:
@@ -189,7 +206,7 @@ class Server:
                     while True:
                         line = self.k2proc.stdout.readline()
                         # TODO: Don't hardcode this
-                        if line.startswith(f'U\tSTART'):
+                        if line.startswith('U\tSTART'):
                             self.starting_sample = False
                             break
 
@@ -214,7 +231,9 @@ class Server:
 
     def recv(self):
         """
-        Listens for messages from the input socket and forwards them to
+        Receive signals from client.
+
+        Listens for messages from the input socket and forward them to
         the appropriate functions.
         """
         print('Server: Waiting for connections')
@@ -226,8 +245,10 @@ class Server:
 
     def start(self, sample_id) -> bytes:
         """
-        Clients try to acquire lock on server.
+        Get locks on client and start processing a sample.
 
+        If no current lock, set lock and inform client to start sending data.
+        If lock acquired, return 1 else return 0.
         """
         if self.lock is False:
             # TODO: don't hardcode the sequence name
@@ -242,8 +263,9 @@ class Server:
         return to_bytes(reply)
 
     def run_batch(self, msg: bytes) -> bytes:
-        """
-        :param msg: a chunk of sequence data
+        """Process a data chunk.
+
+        :param msg: a chunk of sequence data.
         """
         seq = msg.decode('UTF-8')
         self.k2proc.stdin.write(seq)
@@ -252,10 +274,11 @@ class Server:
 
     def stop(self, sample_id: bytes) -> bytes:
         """
-        Insert STOP sentinel into kraken2 stdin.
-        Flush the buffer with some dummy seqs
-        """
+        All data has been sent from a client.
 
+        Insert STOP sentinel into kraken2 stdin.
+        Flush the buffer with some dummy seqs.
+        """
         self.all_seqs_submitted = True
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
@@ -277,7 +300,6 @@ class Server:
 
 def main(args):
     """Entry point to run a kraken2 server."""
-    # TODO: the server shouldn't just start itself
     server = Server(args.ports, args.database, args.k2_binary, args.threads)
     server.run()
 

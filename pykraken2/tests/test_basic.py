@@ -1,15 +1,9 @@
-import copy
-import os
-import tempfile
-import filecmp
-import unittest
 from pathlib import Path
-import subprocess as sub
-
 from threading import Thread
+import unittest
 
-from pykraken2.server import Server
 from pykraken2.client import Client
+from pykraken2.server import Server
 
 
 class SimpleTest(unittest.TestCase):
@@ -86,7 +80,8 @@ class SimpleTest(unittest.TestCase):
 
         # Compare the outputs
         for t in client_data:
-            with open(t[2], 'r') as corr_fh, open(f'temp{t[0]}.tsv', 'w') as fh2:
+            with open(t[2], 'r') as corr_fh, \
+                    open(f'temp{t[0]}.tsv', 'w') as fh2:
                 corr_line = corr_fh.readlines()
                 corr_str = ''.join(corr_line)
 
@@ -94,6 +89,4 @@ class SimpleTest(unittest.TestCase):
                 fh2.write(clinet_str)
                 self.assertEquals(corr_str, clinet_str)
 
-        server.terminate()
-
-
+        # server.terminate()
