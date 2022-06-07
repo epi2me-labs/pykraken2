@@ -59,6 +59,8 @@ class SimpleTest(unittest.TestCase):
 
     def test_020_multi_client(self):
 
+        # Put the running of the client and the collection of the yielded
+        # results onto the same thread.
         def tester(sample_id, results):
             client = Client(self.address, self.ports, self.out1, sample_id)
             print('tester')
@@ -73,10 +75,16 @@ class SimpleTest(unittest.TestCase):
         test_one_results = []
         client1_thread = Thread(target=tester, args=('1', test_one_results))
         client1_thread.start()
-        print('clinet1')
+
+
+        test_two_results = []
+        client2_thread = Thread(target=tester, args=('2', test_two_results))
+        client2_thread.start()
+
+        client1_thread.join()
         client1_thread.join()
 
-
+        # Compare the outputs
         with open(self.correct_output, 'r') as corr_fh:
             corr_line = corr_fh.readlines()
             corr_str = ''.join(corr_line)
