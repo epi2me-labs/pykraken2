@@ -1,23 +1,23 @@
 # Run from /mmfs1/groups/custflow/active/nhorner/kraken/code
 
-python3 k2server.py \
+python3 pykraken2/k2server.py \
+  /mmfs1/groups/custflow/active/nhorner/kraken/db \
   --ports 5555 5556 \
-  --db /mmfs1/groups/custflow/active/nhorner/kraken/db \
   --threads 15 \
   --k2-binary /mmfs1/groups/custflow/active/nhorner/kraken_build/kraken2 &
 server_pid=$!
 
 client_pids=()
-python3 k2client.py \
+python3 pykraken2/k2client.py \
+  /mmfs1/groups/custflow/active/nhorner/bigdros/diffsizes/0.01/fastq_p0.01/subset_0.001.fq \
   --ports 5555 5556 \
-  --fastq /mmfs1/groups/custflow/active/nhorner/bigdros/diffsizes/0.01/fastq_p0.01/subset_0.001.fq \
   --out drops1.tsv \
   --sample_id 001 &
 client_pids+=($!)
 
-python3 k2client.py \
+python3 pykraken2/k2client.py \
+  /mmfs1/groups/custflow/active/nhorner/bigdros/diffsizes/0.01/fastq_p0.01/subset_0.001.fq \
   --ports 5555 5556 \
-  --fastq /mmfs1/groups/custflow/active/nhorner/bigdros/diffsizes/0.01/fastq_p0.01/subset_0.001.fq \
   --out dros2.tsv \
   --sample_id 002
 client_pids+=($!)
