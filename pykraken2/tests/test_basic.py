@@ -8,8 +8,8 @@ import subprocess as sub
 
 from threading import Thread
 
-from pykraken2.k2server import Server
-from pykraken2.k2client import Client
+from pykraken2.server import Server
+from pykraken2.client import Client
 
 
 class SimpleTest(unittest.TestCase):
