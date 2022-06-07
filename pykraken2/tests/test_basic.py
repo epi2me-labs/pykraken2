@@ -74,7 +74,7 @@ class SimpleTest(unittest.TestCase):
         client1_thread.join()
         client2_thread.join()
 
-        # server.terminate()
+        server.terminate()
 
         self.assertTrue(filecmp.cmp(self.out1, self.correct_output))
         self.assertTrue(filecmp.cmp(self.out2, self.correct_output))
