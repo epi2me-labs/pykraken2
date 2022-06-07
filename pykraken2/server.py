@@ -8,8 +8,9 @@ import subprocess as sub
 from threading import Thread
 import time
 
-from pykraken2 import _log_level
 import zmq
+
+from pykraken2 import _log_level
 
 
 class KrakenSignals(Enum):

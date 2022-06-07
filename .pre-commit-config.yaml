@@ -1,8 +1,10 @@
-repos:
   - repo: https://gitlab.com/pycqa/flake8
     rev: 3.7.9
     hooks:
       - id: flake8
         additional_dependencies:
           - flake8-import-order==0.18.1
-        entry: flake8 bin --import-order-style google --statistics
+          - flake8-docstrings==1.6.0
+          - flake8-rst-docstrings==0.2.5
+          - flake8-forbid-visual-indent==0.0.2
+        entry: flake8 pykraken2 --import-order-style google --application-import-names pykraken2 --statistics

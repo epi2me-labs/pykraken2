@@ -1,5 +1,5 @@
 """
-K2client.py
+K2client.py.
 
 Main thread acquires lock from the server. Read chunks of sequence data and
 feed this to the server.
@@ -9,10 +9,10 @@ message before terminating.
 """
 
 import argparse
-import zmq
 from threading import Thread
 import time
-import subprocess as sub
+
+import zmq
 
 from pykraken2 import _log_level
 from pykraken2.server import KrakenSignals
@@ -20,18 +20,22 @@ from pykraken2.server import to_bytes as b
 
 
 class Client:
+    """Client class to stream sequence data to kraken server."""
 
-    def __init__(self, address, ports, outpath: str, sample_id: str):
-        """Create and run a client."""
+    def __init__(self, address, ports, sample_id: str):
+        """Init function.
 
+        :param address: server address
+        :param ports:  [send data port, receive results port]
+        :param sample_id:
+        """
         self.address = address
         self.send_port, self.recv_port = ports
         self.sample_id = sample_id
-        self.outpath = outpath
         self.context = zmq.Context()
 
     def process_fastq(self, fastq):
-
+        """Process a fastq file."""
         send_socket = self.context.socket(zmq.REQ)
         # TODO: should be arbitrary server
         send_socket.connect(f"tcp://{self.address}:{self.send_port}")
@@ -48,13 +52,12 @@ class Client:
                 print(f'Client: Acquired lock on server: {self.sample_id}')
 
                 # Start thread for receiving input
-                # TODO: we shouldn't write results to file but yield to caller
-                # OK, will do once tests working
                 break
             else:
                 time.sleep(1)
-                print(f'Client: Waiting to get lock on server for:'
-                      f'{self.sample_id}')
+                print(
+                    'Client: Waiting to get lock on server for:'
+                    f'{self.sample_id}')
 
         send_thread = Thread(
             target=self._send_worker, args=(fastq, send_socket))
@@ -100,8 +103,9 @@ class Client:
                 # TODO: should be an arbitrary server
                 socket.bind(f'tcp://{self.address}:{self.recv_port}')
             except zmq.error.ZMQError as e:
-                print(f'Client: Port in use?: '
-                      f'Try "kill -9 `lsof -i tcp:{self.recv_port}`"')
+                print(
+                    f'Client: Port in use?: '
+                    f'Try "kill -9 `lsof -i tcp:{self.recv_port}`"')
                 print(e)
             else:
                 break
@@ -112,8 +116,8 @@ class Client:
             status, result = socket.recv_multipart()
             socket.send(b'Recevied')
             if status == KrakenSignals.DONE.value:
-                print('Client: '
-                      'Received data processing complete message')
+                print(
+                    'Client: Received data processing complete message')
                 socket.close()
                 context.term()
                 return

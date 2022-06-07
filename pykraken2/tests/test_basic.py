@@ -1,3 +1,5 @@
+"""pykraken tests."""
+
 from pathlib import Path
 from threading import Thread
 import unittest
@@ -7,10 +9,11 @@ from pykraken2.server import Server
 
 
 class SimpleTest(unittest.TestCase):
+    """Test class."""
 
     @classmethod
     def setUpClass(self):
-        # TODO: need a test database and fastq
+        """Set paths and other variables for tests."""
         data_dir = Path(__file__).parent / 'test_data'
         self.outdir = data_dir / 'output'
         self.database = data_dir / 'db'
@@ -51,12 +54,16 @@ class SimpleTest(unittest.TestCase):
     #     assert False
 
     def test_020_multi_client(self):
+        """Client/server integration testing.
 
-        # Put the running of the client and the collection of the yielded
-        # results onto the same thread.
-        def tester(sample_id, input_, results):
-            client = Client(self.address, self.ports, input_, sample_id)
-            print('tester')
+        A server instance and two client instances are run on threads.
+        The results yielded by client.process_fastq and saved to a list.
+        These results are compared to expected kraken2 results generated
+        from using kraken2 directly.
+        """
+
+        def client_runner(sample_id, input_, results):
+            client = Client(self.address, self.ports, sample_id)
             for chunk in client.process_fastq(input_):
                 results.extend(chunk)
 
@@ -65,13 +72,17 @@ class SimpleTest(unittest.TestCase):
         server_thread = Thread(target=server.run)
         server_thread.start()
 
+        # Data for 2 client instances
+        # [Sample_id, input, expected output, empty results list]
         client_data = [
             ['1', self.fastq1, self.correct1, []],
             ['2', self.fastq2, self.correct2, []]
         ]
 
         for cdata in client_data:
-            thread = Thread(target=tester, args=(cdata[0], cdata[1], cdata[3]))
+            thread = Thread(
+                target=client_runner, args=(cdata[0], cdata[1], cdata[3]))
+            # Put thread object onto client_data
             cdata.append(thread)
             thread.start()
 
@@ -80,13 +91,11 @@ class SimpleTest(unittest.TestCase):
 
         # Compare the outputs
         for t in client_data:
-            with open(t[2], 'r') as corr_fh, \
-                    open(f'temp{t[0]}.tsv', 'w') as fh2:
+            with open(t[2], 'r') as corr_fh:
                 corr_line = corr_fh.readlines()
                 corr_str = ''.join(corr_line)
 
                 clinet_str = ''.join(t[3])
-                fh2.write(clinet_str)
                 self.assertEquals(corr_str, clinet_str)
 
         # server.terminate()

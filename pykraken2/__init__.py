@@ -1,11 +1,11 @@
-"""Python kraken2 server/client"""
+"""pykraken setup.py."""
+
 import argparse
 import importlib
-import json
 import logging
-import warnings
 
 __version__ = "0.0.1"
+
 
 def get_named_logger(name):
     """Create a logger with a name."""
@@ -16,18 +16,19 @@ def get_named_logger(name):
 
 
 def _log_level():
-    """Parser to set logging level and acquire software version/commit"""
-
+    """Parser to set logging level and acquire software version/commit."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter, add_help=False)
 
-    #parser.add_argument('--version', action='version', version=get_version())
+    # parser.add_argument('--version', action='version', version=get_version())
 
     modify_log_level = parser.add_mutually_exclusive_group()
-    modify_log_level.add_argument('--debug', action='store_const',
+    modify_log_level.add_argument(
+        '--debug', action='store_const',
         dest='log_level', const=logging.DEBUG, default=logging.INFO,
         help='Verbose logging of debug information.')
-    modify_log_level.add_argument('--quiet', action='store_const',
+    modify_log_level.add_argument(
+        '--quiet', action='store_const',
         dest='log_level', const=logging.WARNING, default=logging.INFO,
         help='Minimal logging; warnings only).')
 
@@ -62,4 +63,3 @@ def cli():
     logger = logging.getLogger(__package__)
     logger.setLevel(args.log_level)
     args.func(args)
-
