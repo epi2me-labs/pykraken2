@@ -4,7 +4,7 @@
 import argparse
 import datetime
 from enum import Enum
-import subprocess as sub
+import subprocess
 import threading
 from threading import Thread
 import time
@@ -118,9 +118,9 @@ class Server:
             '/dev/fd/0'
         ]
 
-        self.k2proc = sub.Popen(
-            cmd, stdin=sub.PIPE, stdout=sub.PIPE, stderr=sub.PIPE,
-            universal_newlines=True, bufsize=1)
+        self.k2proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
 
         # Wait for database loading before binding to input socket
         self.logger.info('Loading kraken2 database')
