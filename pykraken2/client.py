@@ -9,6 +9,7 @@ message before terminating.
 """
 
 import argparse
+import threading
 from threading import Thread
 import time
 
@@ -35,6 +36,7 @@ class Client:
         self.sample_id = sample_id
         self.context = zmq.Context()
         self.active = True
+        self.event = threading.Event()
 
     def process_fastq(self, fastq):
         """Process a fastq file."""
@@ -51,7 +53,6 @@ class Client:
 
             if lock:
                 self.logger.info('Acquired lock on server')
-
                 # Start thread for receiving input
                 break
             else:
@@ -59,16 +60,16 @@ class Client:
                 self.logger.info('Waiting for lock on server')
 
         send_thread = Thread(
-            target=self._send_worker, args=(fastq, send_socket))
+            target=self._send_worker, args=(fastq, send_socket, self.event))
         send_thread.start()
 
         for chunk in self._receiver():
             yield chunk
 
-    def _send_worker(self, fastq, socket):
+    def _send_worker(self, fastq, socket, event: threading.Event):
 
         with open(fastq, 'r') as fh:
-            while self.active:
+            while not event.is_set():
                 # There was a suggestion to send all the reads from a sample
                 # as a single message. But this would require reading the whole
                 # fastq file into memory first.
@@ -129,7 +130,7 @@ class Client:
 
     def terminate(self):
         """Terminate the client."""
-        self.active = False
+        self.event.set()
 
 
 def main(args):

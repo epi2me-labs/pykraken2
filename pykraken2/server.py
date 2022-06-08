@@ -5,6 +5,7 @@ import argparse
 import datetime
 from enum import Enum
 import subprocess as sub
+import threading
 from threading import Thread
 import time
 
@@ -85,6 +86,8 @@ class Server:
         # Are we waiting for processing of a sample to start
         self.starting_sample = True
 
+        self.event = threading.Event()
+
         self.fake_sequence = (
             "@{}\n"
             f"{'T' * self.FAKE_SEQUENCE_LENGTH}\n"
@@ -142,10 +145,12 @@ class Server:
 
         self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
 
-        self.recv_thread = Thread(target=self.recv)
+        self.recv_thread = Thread(
+            target=self.recv, args=(self.event,))
         self.recv_thread.start()
 
-        self.return_thread = Thread(target=self.return_results)
+        self.return_thread = Thread(
+            target=self.return_results, args=(self.event,))
         self.return_thread.start()
 
     def do_final_chunk(self):
@@ -183,7 +188,7 @@ class Server:
                 return
             lines.append(line)
 
-    def return_results(self):
+    def return_results(self, event: threading.Event):
         """
         Return kraken2 results to clients.
 
@@ -192,7 +197,7 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels.
         """
-        while self.active:
+        while not event.is_set():
             if self.lock:  # Is a client connected?
                 if self.starting_sample:
                     # remove any remaining dummy seqs from previous
@@ -226,7 +231,7 @@ class Server:
         self.return_context.term()
         self.logger.info('Return thread exiting')
 
-    def recv(self):
+    def recv(self, event: threading.Event):
         """
         Receive signals from client.
 
@@ -237,7 +242,7 @@ class Server:
         poller.register(self.input_socket, flags=zmq.POLLIN)
         self.logger.info('Waiting for connections')
 
-        while self.active:
+        while not event.is_set():
             if poller.poll(timeout=1000):
                 query = self.input_socket.recv_multipart()
                 route = KrakenSignals(query[0]).name.lower()
@@ -298,7 +303,7 @@ class Server:
 
     def terminate(self):
         """Wait for threads to terminate and exit."""
-        self.active = False
+        self.event.set()
         while True:
             if all([not x.is_alive() for x in
                     [self.recv_thread, self.return_thread]]):
