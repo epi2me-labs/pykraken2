@@ -26,7 +26,7 @@ class SimpleTest(unittest.TestCase):
         cls.address = '127.0.0.1'
         cls.threads = 4
         cls.k2_binary = Path(
-            __file__).parent.parent / 'bin' / 'kraken2_linux' / 'kraken2'
+            __file__).parent.parent / 'venv' / 'bin' / 'kraken2'
 
     def tearDown(self):
         """Clean up after each test."""
