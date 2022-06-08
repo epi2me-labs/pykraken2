@@ -110,8 +110,6 @@ class Server:
             'stdbuf', '-oL',
             self.k2_binary,
             '--unbuffered-output',
-            '--classified-out', self.CLASSIFIED_READS,
-            '--unclassified-out', self.UNCLASSIFIED_READS,
             '--db', self.kraken_db_dir,
             '--threads', str(self.threads),
             '--batch-size', str(self.K2_READBUF_SIZE),
