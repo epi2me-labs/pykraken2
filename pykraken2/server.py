@@ -140,7 +140,7 @@ class Server:
             self.input_socket.bind(f'tcp://{self.address}:{self.ports[0]}')
         except zmq.error.ZMQError:
             exit(
-                f'Sever: Port in use: '
+                'Port in use: '
                 f'Try "kill -9 `lsof -i tcp:{self.ports[0]}`"')
 
         self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
@@ -168,7 +168,7 @@ class Server:
             line = self.k2proc.stdout.readline()
 
             if line.startswith('U\tEND'):
-                self.logger.info('Server: Found termination sentinel')
+                self.logger.info('Found termination sentinel')
                 # Include last chunk up to (and including for testing)
                 # the stop sentinel
 
@@ -184,7 +184,7 @@ class Server:
                     [KrakenSignals.DONE.value, KrakenSignals.DONE.value])
                 self.return_socket.recv()
 
-                self.logger.info('server: Stop sentinel found')
+                self.logger.debug('Stop sentinel found')
                 return
             lines.append(line)
 
@@ -210,9 +210,9 @@ class Server:
                             break
 
                 if self.all_seqs_submitted:
-                    self.logger.info('Server: Checking for sentinel')
+                    self.logger.info('Checking for sentinel')
                     self.do_final_chunk()
-                    self.logger.info('Server: releasing lock')
+                    self.logger.info('Releasing lock')
                     self.lock = False
                     continue
 
@@ -265,7 +265,7 @@ class Server:
             self.starting_sample = True
             self.all_seqs_submitted = False
             self.lock = True  # Starts sending results back
-            self.logger.info(f"Server: got lock for {sample_id}")
+            self.logger.info(f"Got lock for {sample_id}")
             reply = '1'
         else:
             reply = '0'
@@ -291,18 +291,18 @@ class Server:
         self.all_seqs_submitted = True
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
-
-        # TODO: don't hardcode the sequence name
         self.k2proc.stdin.write(self.fake_sequence.format('END'))
         self.logger.info('flushing')
         self.k2proc.stdin.write(self.flush_seqs)
         self.logger.info("All dummy seqs written")
         return (
-            "Server got STOP signal from client for "
+            "Got STOP signal from client for "
             f"{sample_id}").encode('UTF-8')
 
     def terminate(self):
-        """Wait for threads to terminate and exit."""
+        """Wait for processing and threads to terminate and exit."""
+        while self.lock:
+            self.logger.debug('Waiting for processing to finish')
         self.event.set()
         while True:
             if all([not x.is_alive() for x in
