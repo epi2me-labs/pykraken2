@@ -10,6 +10,7 @@ import time
 
 import zmq
 
+import pykraken2
 from pykraken2 import _log_level
 
 
@@ -58,6 +59,7 @@ class Server:
         :param k2_binary: path to kraken2 binary
         :param threads: cpus to use
         """
+        self.logger = pykraken2.get_named_logger('Server')
         self.kraken_db_dir = kraken_db_dir
 
         self.k2_binary = k2_binary
@@ -95,7 +97,7 @@ class Server:
 
         # --batch-size sets number of reads that kraken will process before
         # writing results
-        print('k2 binary', k2_binary)
+        self.logger.info('k2 binary', k2_binary)
 
     def run(self):
         """Start the server."""
@@ -118,18 +120,18 @@ class Server:
             universal_newlines=True, bufsize=1)
 
         # Wait for database loading before binding to input socket
-        print('Loading kraken2 database')
+        self.logger.info('Loading kraken2 database')
         start = datetime.datetime.now()
 
         while True:
             stderr = self.k2proc.stderr.readline()
             if 'done' in stderr:
-                print('Database loaded. Binding to input socket')
+                self.logger.info('Database loaded. Binding to input socket')
                 break
 
         end = datetime.datetime.now()
         delta = end - start
-        print(f'Kraken database loading duration: {delta}')
+        self.logger.info(f'Kraken database loading duration: {delta}')
 
         try:
             self.input_socket.bind(f'tcp://{self.address}:{self.ports[0]}')
@@ -161,7 +163,7 @@ class Server:
             line = self.k2proc.stdout.readline()
 
             if line.startswith('U\tEND'):
-                print('Server: Found termination sentinel')
+                self.logger.info('Server: Found termination sentinel')
                 # Include last chunk up to (and including for testing)
                 # the stop sentinel
 
@@ -177,7 +179,7 @@ class Server:
                     [KrakenSignals.DONE.value, KrakenSignals.DONE.value])
                 self.return_socket.recv()
 
-                print('server: Stop sentinel found')
+                self.logger.info('server: Stop sentinel found')
                 return
             lines.append(line)
 
@@ -203,9 +205,9 @@ class Server:
                             break
 
                 if self.all_seqs_submitted:
-                    print('Server: Checking for sentinel')
+                    self.logger.info('Server: Checking for sentinel')
                     self.do_final_chunk()
-                    print('Server: releasing lock')
+                    self.logger.info('Server: releasing lock')
                     self.lock = False
                     continue
 
@@ -218,11 +220,11 @@ class Server:
                 self.return_socket.recv()
 
             else:
-                print('Server: waiting for lock')
+                self.logger.info('Waiting for lock')
                 time.sleep(1)
         self.return_socket.close()
         self.return_context.term()
-        print('return thread exiting')
+        self.logger.info('Return thread exiting')
 
     def recv(self):
         """
@@ -233,7 +235,7 @@ class Server:
         """
         poller = zmq.Poller()
         poller.register(self.input_socket, flags=zmq.POLLIN)
-        print('Server: Waiting for connections')
+        self.logger.info('Waiting for connections')
 
         while self.active:
             if poller.poll(timeout=1000):
@@ -243,7 +245,7 @@ class Server:
                 self.input_socket.send(msg)
         self.input_socket.close()
         self.input_context.term()
-        print('recv thread existing')
+        self.logger.info('recv thread existing')
 
     def start(self, sample_id) -> bytes:
         """
@@ -258,7 +260,7 @@ class Server:
             self.starting_sample = True
             self.all_seqs_submitted = False
             self.lock = True  # Starts sending results back
-            print(f"Server: got lock for {sample_id}")
+            self.logger.info(f"Server: got lock for {sample_id}")
             reply = '1'
         else:
             reply = '0'
@@ -287,9 +289,9 @@ class Server:
 
         # TODO: don't hardcode the sequence name
         self.k2proc.stdin.write(self.fake_sequence.format('END'))
-        print('Server: flushing')
+        self.logger.info('flushing')
         self.k2proc.stdin.write(self.flush_seqs)
-        print("Server: All dummy seqs written")
+        self.logger.info("All dummy seqs written")
         return (
             "Server got STOP signal from client for "
             f"{sample_id}").encode('UTF-8')
@@ -302,7 +304,7 @@ class Server:
                     [self.recv_thread, self.return_thread]]):
                 break
             time.sleep(1)
-        print('Server: exiting')
+        self.logger.info('Exiting!')
 
 
 def main(args):

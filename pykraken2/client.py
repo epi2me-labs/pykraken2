@@ -14,6 +14,7 @@ import time
 
 import zmq
 
+import pykraken2
 from pykraken2 import _log_level
 from pykraken2.server import KrakenSignals
 
@@ -28,6 +29,7 @@ class Client:
         :param ports:  [send data port, receive results port]
         :param sample_id:
         """
+        self.logger = pykraken2.get_named_logger(f'Client-{sample_id}')
         self.address = address
         self.send_port, self.recv_port = ports
         self.sample_id = sample_id
@@ -48,15 +50,13 @@ class Client:
             lock = int(send_socket.recv())
 
             if lock:
-                print(f'Client: Acquired lock on server: {self.sample_id}')
+                self.logger.info('Acquired lock on server')
 
                 # Start thread for receiving input
                 break
             else:
                 time.sleep(1)
-                print(
-                    'Client: Waiting to get lock on server for:'
-                    f'{self.sample_id}')
+                self.logger.info('Waiting for lock on server')
 
         send_thread = Thread(
             target=self._send_worker, args=(fastq, send_socket))
@@ -89,7 +89,7 @@ class Client:
                         [KrakenSignals.STOP.value,
                          self.sample_id.encode('UTF-8')])
                     socket.recv()
-                    print('Client: sending finished')
+                    self.logger.info('Sending data finished')
                     socket.close()
                     break
 
@@ -105,22 +105,22 @@ class Client:
                 # TODO: should be an arbitrary server
                 socket.bind(f'tcp://{self.address}:{self.recv_port}')
             except zmq.error.ZMQError as e:
-                print(
+                self.logger.warn(
                     f'Client: Port in use?: '
                     f'Try "kill -9 `lsof -i tcp:{self.recv_port}`"')
-                print(e)
+                self.logger.exception(e)
             else:
                 break
             time.sleep(1)
-        print(f"{self.sample_id}: receive_results thread listening")
+        self.logger.info("receive_results thread listening")
 
         while self.active:
             if poller.poll(timeout=1000):
                 status, result = socket.recv_multipart()
                 socket.send(b'Recevied')
                 if status == KrakenSignals.DONE.value:
-                    print(
-                        'Client: Received data processing complete message')
+                    self.logger.info(
+                        'Received data processing complete message')
                     break
                 yield result.decode('UTF-8')
 
