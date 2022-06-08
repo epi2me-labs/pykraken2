@@ -1,6 +1,7 @@
 """pykraken tests."""
 
 from pathlib import Path
+import subprocess as sub
 from threading import Thread
 import unittest
 
@@ -23,24 +24,31 @@ class SimpleTest(unittest.TestCase):
         self.correct2 = data_dir / 'correct_output' / 'k2out2.tsv'
         self.ports = [5555, 5556]
         self.address = '127.0.0.1'
+        self.threads = 4
         self.k2_binary = Path(
             __file__).parent.parent / 'bin' / 'kraken2_linux' / 'kraken2'
 
     # def tearDown(self) -> None:
     #     sub.call('kill -9 $(lsof -i tcp:5555-5556)', shell=True)
+    @unittest.skip
+    def test_001_check_kraken_binary(self):
+        """Test the bundled kraken2 binary."""
+        try:
+            sub.check_output([self.k2_binary, '--help'])
+        except sub.CalledProcessError as e:
+            self.assertTrue(False)
+            self.skipTest(f"Kraken binary not working\n {e}")
+        else:
+            self.assertTrue(True)
 
-    # def test_001_check_binary(self):
-    #     self.skipTest('skip')
-    #     try:
-    #         sub.check_output([self.k2_binary, '--help'])
-    #     except sub.CalledProcessError as e:
-    #         self.assertTrue(False)
-    #         self.skipTest(f"Kraken binary not working\n {e}")
-    #     else:
-    #         self.assertTrue(True)
-    # def test_001_create_server(self):
-    #     server = Server()
-    #
+    def test_002_create_server(self):
+        """Test the server API."""
+        server = Server(
+            self.address, self.ports, self.database,
+            self.k2_binary, self.threads)
+        server.run()
+        server.terminate()
+
     # def test_002_create_client(self):
     #     client = Client()
     #
@@ -53,6 +61,7 @@ class SimpleTest(unittest.TestCase):
     #     # TODO: check results
     #     assert False
 
+    # @unittest.skip
     def test_020_multi_client(self):
         """Client/server integration testing.
 
@@ -61,14 +70,14 @@ class SimpleTest(unittest.TestCase):
         These results are compared to expected kraken2 results generated
         from using kraken2 directly.
         """
-
         def client_runner(sample_id, input_, results):
             client = Client(self.address, self.ports, sample_id)
             for chunk in client.process_fastq(input_):
                 results.extend(chunk)
 
         server = Server(
-            self.address, self.ports, self.database, self.k2_binary, 4)
+            self.address, self.ports, self.database,
+            self.k2_binary, self.threads)
         server_thread = Thread(target=server.run)
         server_thread.start()
 

@@ -70,15 +70,18 @@ class Server:
         :param threads: cpus to use
         """
         self.kraken_db_dir = kraken_db_dir
-        self.context = zmq.Context()
+
         self.k2_binary = k2_binary
         self.threads = threads
         self.address = address
         self.ports = ports
         self.active = True
 
-        self.input_socket = self.context.socket(zmq.REP)
-        self.return_socket = self.context.socket(zmq.REQ)
+        self.input_context = zmq.Context()
+        self.input_socket = self.input_context.socket(zmq.REP)
+
+        self.return_context = zmq.Context()
+        self.return_socket = self.return_context.socket(zmq.REQ)
 
         self.recv_thread = None
         self.return_thread = None
@@ -229,6 +232,9 @@ class Server:
             else:
                 print('Server: waiting for lock')
                 time.sleep(1)
+        self.return_socket.close()
+        self.return_context.term()
+        print('return thread exiting')
 
     def recv(self):
         """
@@ -247,6 +253,9 @@ class Server:
                 route = KrakenSignals(query[0]).name.lower()
                 msg = getattr(self, route)(query[1])
                 self.input_socket.send(msg)
+        self.input_socket.close()
+        self.input_context.term()
+        print('recv thread existing')
 
     def start(self, sample_id) -> bytes:
         """
@@ -296,8 +305,14 @@ class Server:
         return to_bytes(f'Server got STOP signal from client for {sample_id}')
 
     def terminate(self):
-        """Cleanup and exit."""
+        """Wait for threads to terminate and exit."""
         self.active = False
+        while True:
+            if all([not x.is_alive() for x in
+                    [self.recv_thread, self.return_thread]]):
+                break
+            time.sleep(1)
+        print('Server: exiting')
 
 
 def main(args):
