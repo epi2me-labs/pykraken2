@@ -96,6 +96,6 @@ class SimpleTest(unittest.TestCase):
                 corr_str = ''.join(corr_line)
 
                 clinet_str = ''.join(t[3])
-                self.assertEquals(corr_str, clinet_str)
+                self.assertEqual(corr_str, clinet_str)
 
-        # server.terminate()
+        server.terminate()

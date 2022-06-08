@@ -237,12 +237,16 @@ class Server:
         Listens for messages from the input socket and forward them to
         the appropriate functions.
         """
+        poller = zmq.Poller()
+        poller.register(self.input_socket, flags=zmq.POLLIN)
         print('Server: Waiting for connections')
+
         while self.active:
-            query = self.input_socket.recv_multipart()
-            route = KrakenSignals(query[0]).name.lower()
-            msg = getattr(self, route)(query[1])
-            self.input_socket.send(msg)
+            if poller.poll(timeout=1000):
+                query = self.input_socket.recv_multipart()
+                route = KrakenSignals(query[0]).name.lower()
+                msg = getattr(self, route)(query[1])
+                self.input_socket.send(msg)
 
     def start(self, sample_id) -> bytes:
         """
@@ -294,9 +298,6 @@ class Server:
     def terminate(self):
         """Cleanup and exit."""
         self.active = False
-        self.input_socket.close()
-        self.return_socket.close()
-        self.context.term()
 
 
 def main(args):
