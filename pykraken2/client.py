@@ -33,11 +33,11 @@ class Client:
         self.send_port, self.recv_port = ports
         self.sample_id = sample_id
         self.context = zmq.Context()
+        self.active = True
 
     def process_fastq(self, fastq):
         """Process a fastq file."""
         send_socket = self.context.socket(zmq.REQ)
-        # TODO: should be arbitrary server
         send_socket.connect(f"tcp://{self.address}:{self.send_port}")
 
         while True:
@@ -69,7 +69,7 @@ class Client:
     def _send_worker(self, fastq, socket):
 
         with open(fastq, 'r') as fh:
-            while True:
+            while self.active:
                 # There was a suggestion to send all the reads from a sample
                 # as a single message. But this would require reading the whole
                 # fastq file into memory first.
@@ -97,8 +97,10 @@ class Client:
         """Worker to receive results."""
         context = self.context
         socket = context.socket(zmq.REP)
+        poller = zmq.Poller()
+        poller.register(socket, flags=zmq.POLLIN)
 
-        while True:
+        while self.active:
             try:
                 # TODO: should be an arbitrary server
                 socket.bind(f'tcp://{self.address}:{self.recv_port}')
@@ -112,16 +114,22 @@ class Client:
             time.sleep(1)
         print(f"{self.sample_id}: receive_results thread listening")
 
-        while True:
-            status, result = socket.recv_multipart()
-            socket.send(b'Recevied')
-            if status == KrakenSignals.DONE.value:
-                print(
-                    'Client: Received data processing complete message')
-                socket.close()
-                context.term()
-                return
-            yield result.decode('UTF-8')
+        while self.active:
+            if poller.poll(timeout=1000):
+                status, result = socket.recv_multipart()
+                socket.send(b'Recevied')
+                if status == KrakenSignals.DONE.value:
+                    print(
+                        'Client: Received data processing complete message')
+                    break
+                yield result.decode('UTF-8')
+
+        socket.close()
+        context.term()
+
+    def terminate(self):
+        """Terminate the client."""
+        self.active = False
 
 
 def main(args):
