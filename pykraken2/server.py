@@ -25,16 +25,6 @@ class KrakenSignals(Enum):
     DONE = b'51'
 
 
-def to_bytes(string) -> bytes:
-    """Encode strings."""
-    return string.encode('UTF-8')
-
-
-def to_string(bytes_) -> str:
-    """Decode strings."""
-    return bytes_.decode('UTF-8')
-
-
 class Server:
     """
     Server class.
@@ -53,7 +43,6 @@ class Server:
 
     """
 
-    FULL_OUTPUT = 'all_kraken2_output'
     CLASSIFIED_READS = 'kraken2.classified.fastq'
     UNCLASSIFIED_READS = 'kraken2.unclassified.fastq'
     FAKE_SEQUENCE_LENGTH = 50
@@ -115,7 +104,6 @@ class Server:
         cmd = [
             'stdbuf', '-oL',
             self.k2_binary,
-            '--report', 'kraken2_report.txt',
             '--unbuffered-output',
             '--classified-out', self.CLASSIFIED_READS,
             '--unclassified-out', self.UNCLASSIFIED_READS,
@@ -177,9 +165,9 @@ class Server:
                 # Include last chunk up to (and including for testing)
                 # the stop sentinel
 
-                final_bit = "".join(lines)
+                final_bit = "".join(lines).encode('UTF-8')
                 self.return_socket.send_multipart(
-                    [KrakenSignals.NOT_DONE.value, to_bytes(final_bit)])
+                    [KrakenSignals.NOT_DONE.value, final_bit])
                 self.return_socket.recv()
 
                 # Client can receive no more messages after the
@@ -223,10 +211,10 @@ class Server:
 
                 # Send kraken enough reads so it will spit results out
                 # TODO: don't hardcode 10000
-                stdout = self.k2proc.stdout.read(10000)
+                stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
 
                 self.return_socket.send_multipart(
-                    [KrakenSignals.NOT_DONE.value, to_bytes(stdout)])
+                    [KrakenSignals.NOT_DONE.value, stdout])
                 self.return_socket.recv()
 
             else:
@@ -274,7 +262,7 @@ class Server:
             reply = '1'
         else:
             reply = '0'
-        return to_bytes(reply)
+        return reply.encode('UTF-8')
 
     def run_batch(self, msg: bytes) -> bytes:
         """Process a data chunk.
@@ -302,7 +290,9 @@ class Server:
         print('Server: flushing')
         self.k2proc.stdin.write(self.flush_seqs)
         print("Server: All dummy seqs written")
-        return to_bytes(f'Server got STOP signal from client for {sample_id}')
+        return (
+            "Server got STOP signal from client for "
+            f"{sample_id}").encode('UTF-8')
 
     def terminate(self):
         """Wait for threads to terminate and exit."""

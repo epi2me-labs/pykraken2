@@ -16,7 +16,6 @@ import zmq
 
 from pykraken2 import _log_level
 from pykraken2.server import KrakenSignals
-from pykraken2.server import to_bytes as b
 
 
 class Client:
@@ -44,7 +43,7 @@ class Client:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
             send_socket.send_multipart(
-                [KrakenSignals.START.value, b(self.sample_id)])
+                [KrakenSignals.START.value, self.sample_id.encode('UTF-8')])
 
             lock = int(send_socket.recv())
 
@@ -81,13 +80,14 @@ class Client:
 
                 if seq:
                     socket.send_multipart(
-                        [KrakenSignals.RUN_BATCH.value, b(seq)])
+                        [KrakenSignals.RUN_BATCH.value, seq.encode('UTF-8')])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
                     socket.recv()
                 else:
                     socket.send_multipart(
-                        [KrakenSignals.STOP.value, b(self.sample_id)])
+                        [KrakenSignals.STOP.value,
+                         self.sample_id.encode('UTF-8')])
                     socket.recv()
                     print('Client: sending finished')
                     socket.close()
