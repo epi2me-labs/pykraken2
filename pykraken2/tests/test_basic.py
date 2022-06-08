@@ -26,7 +26,7 @@ class SimpleTest(unittest.TestCase):
         cls.address = '127.0.0.1'
         cls.threads = 4
         cls.k2_binary = Path(
-            __file__).parent.parent / 'venv' / 'bin' / 'kraken2'
+            __file__).parent.parent.parent / 'venv' / 'bin' / 'kraken2'
 
     def tearDown(self):
         """Clean up after each test."""
@@ -71,14 +71,12 @@ class SimpleTest(unittest.TestCase):
 
         client = Client(self.address, self.ports, 'id1')
         result = [x for x in client.process_fastq(self.fastq1)]
-
         with open(self.expected_output1, 'r') as corr_fh:
             corr_line = corr_fh.readlines()
             corr_str = ''.join(corr_line)
 
             client_str = ''.join(result)
             self.assertEqual(corr_str, client_str)
-
         server.terminate()
 
     def test_005_multi_client(self):
