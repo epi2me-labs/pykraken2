@@ -24,9 +24,10 @@ test: venv/bin/activate
 	${IN_VENV} && flake8 pykraken2 \
 		--import-order-style google --application-import-names pykraken2 \
 		--statistics
-	${IN_VENV} && pytest pykraken2 --doctest-modules \
-		--cov=pykraken2 --cov-report html --cov-report term \
-		--cov-fail-under=${COVFAIL} --cov-report term-missing
+	${IN_VENV} && pytest pykraken2
+#	${IN_VENV} && pytest pykraken2 --doctest-modules \
+#		--cov=pykraken2 --cov-report html --cov-report term \
+#		--cov-fail-under=${COVFAIL} --cov-report term-missing
 
 IN_BUILD=. ./pypi_build/bin/activate
 pypi_build/bin/activate:
