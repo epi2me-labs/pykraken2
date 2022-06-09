@@ -55,13 +55,14 @@ class Server:
             self, kraken_db_dir, address='localhost', ports=[5555, 5556],
             k2_binary='kraken2', threads=1):
         """
-        Sever constructor.
+        Server constructor.
 
-        :param address: server ip
+        :param address: address of the server:
+            e.g. 127.0.0.1 or localhost
         :param ports: [input port, output port]
         :param kraken_db_dir: path to kraken2 database directory
         :param k2_binary: path to kraken2 binary
-        :param threads: cpus to use
+        :param threads: number of threads for kraken2
         """
         self.logger = pykraken2.get_named_logger('Server')
         self.kraken_db_dir = kraken_db_dir
@@ -164,14 +165,12 @@ class Server:
         along with a DONE message.
         """
         lines = []
-        while self.active:
 
+        while True:
             line = self.k2proc.stdout.readline()
 
             if line.startswith('U\tEND'):
                 self.logger.info('Found termination sentinel')
-                # Include last chunk up to (and including for testing)
-                # the stop sentinel
 
                 final_bit = "".join(lines).encode('UTF-8')
                 self.return_socket.send_multipart(
