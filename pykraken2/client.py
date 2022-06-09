@@ -41,7 +41,7 @@ class Client:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
             send_socket.send_multipart(
-                [packb(KrakenSignals.START.value),
+                [packb(KrakenSignals.START_SAMPLE.value),
                  self.sample_id.encode('UTF-8')])
 
             lock = unpackb(send_socket.recv())
@@ -83,7 +83,7 @@ class Client:
                     socket.recv()
                 else:
                     socket.send_multipart(
-                        [packb(KrakenSignals.STOP.value),
+                        [packb(KrakenSignals.SAMPLE_FINISHED.value),
                          self.sample_id.encode('UTF-8')])
                     socket.recv()
                     self.logger.info('Sending data finished')

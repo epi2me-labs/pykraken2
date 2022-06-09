@@ -20,8 +20,8 @@ class KrakenSignals(Enum):
     """Client/Server communication enum."""
 
     # client to server
-    START = 1
-    STOP = 2
+    START_SAMPLE = 1
+    SAMPLE_FINISHED = 2
     RUN_BATCH = 3
     # server to client
     NOT_DONE = 50
@@ -243,7 +243,7 @@ class Server:
         context.term()
         self.logger.info('recv thread existing')
 
-    def start(self, sample_id) -> bytes:
+    def start_sample(self, sample_id) -> bytes:
         """
         Get locks on client and start processing a sample.
 
@@ -257,9 +257,9 @@ class Server:
             self.all_seqs_submitted_event.clear()
             self.lock = True  # Starts sending results back
             self.logger.info(f"Got lock for {sample_id}")
-            reply = 1
+            reply = True
         else:
-            reply = 0
+            reply = False
         return packb(reply)
 
     def run_batch(self, msg: bytes) -> bytes:
@@ -272,7 +272,7 @@ class Server:
         self.k2proc.stdin.flush()
         return b'Server: Chunk received'
 
-    def stop(self, sample_id: bytes) -> bytes:
+    def sample_finished(self, sample_id: bytes) -> bytes:
         """
         All data has been sent from a client.
 
@@ -294,12 +294,15 @@ class Server:
         """Wait for processing and threads to terminate and exit."""
         while self.lock:
             self.logger.debug('Waiting for processing to finish')
-        self.terminate_event.set()
-        while True:
-            if all([not x.is_alive() for x in
-                    [self.recv_thread, self.return_thread]]):
-                break
             time.sleep(1)
+        self.terminate_event.set()
+        self.recv_thread.join()
+        self.return_thread.join()
+        # while True:
+        #     if all([not x.is_alive() for x in
+        #             [self.recv_thread, self.return_thread]]):
+        #         break
+        #     time.sleep(1)
         self.logger.info('Exiting!')
 
 
