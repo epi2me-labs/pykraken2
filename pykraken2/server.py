@@ -86,12 +86,12 @@ class Server:
         # If a client is connected, lock prevents other connections
         self.lock = False
         # Have all seqs from current sample been passed to kraken
-        self.all_seqs_submitted_evt = threading.Event()
+        self.all_seqs_submitted_event = threading.Event()
         # Are we waiting for processing of a sample to start
-        self.start_sample_evt = threading.Event()
-        self.start_sample_evt.set()
+        self.start_sample_event = threading.Event()
+        self.start_sample_event.set()
 
-        self.event = threading.Event()
+        self.terminate_event = threading.Event()
 
         self.fake_sequence = (
             "@{}\n"
@@ -149,11 +149,11 @@ class Server:
         self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
 
         self.recv_thread = Thread(
-            target=self.recv, args=(self.event,))
+            target=self.recv)
         self.recv_thread.start()
 
         self.return_thread = Thread(
-            target=self.return_results, args=(self.event,))
+            target=self.return_results)
         self.return_thread.start()
 
     def do_final_chunk(self):
@@ -190,7 +190,7 @@ class Server:
                 return
             lines.append(line)
 
-    def return_results(self, event: threading.Event):
+    def return_results(self):
         """
         Return kraken2 results to clients.
 
@@ -199,19 +199,19 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels.
         """
-        while not event.is_set():
+        while not self.terminate_event.is_set():
             if self.lock:  # Is a client connected?
-                if self.start_sample_evt.is_set():
+                if self.start_sample_event.is_set():
                     # remove any remaining dummy seqs from previous
                     # samples
                     while True:
                         line = self.k2proc.stdout.readline()
                         # TODO: Don't hardcode this
                         if line.startswith('U\tSTART'):
-                            self.start_sample_evt.clear()
+                            self.start_sample_event.clear()
                             break
 
-                if self.all_seqs_submitted_evt.is_set():
+                if self.all_seqs_submitted_event.is_set():
                     self.logger.info('Checking for sentinel')
                     self.do_final_chunk()
                     self.logger.info('Releasing lock')
@@ -233,7 +233,7 @@ class Server:
         self.return_context.term()
         self.logger.info('Return thread exiting')
 
-    def recv(self, event: threading.Event):
+    def recv(self):
         """
         Receive signals from client.
 
@@ -244,7 +244,7 @@ class Server:
         poller.register(self.input_socket, flags=zmq.POLLIN)
         self.logger.info('Waiting for connections')
 
-        while not event.is_set():
+        while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
                 query = (self.input_socket.recv_multipart())
                 route = KrakenSignals(unpackb(query[0])).name.lower()
@@ -264,8 +264,8 @@ class Server:
         if self.lock is False:
             # TODO: don't hardcode the sequence name
             self.k2proc.stdin.write(self.fake_sequence.format('START'))
-            self.start_sample_evt.set()
-            self.all_seqs_submitted_evt.clear()
+            self.start_sample_event.set()
+            self.all_seqs_submitted_event.clear()
             self.lock = True  # Starts sending results back
             self.logger.info(f"Got lock for {sample_id}")
             reply = 1
@@ -290,7 +290,7 @@ class Server:
         Insert STOP sentinel into kraken2 stdin.
         Flush the buffer with some dummy seqs.
         """
-        self.all_seqs_submitted_evt.set()
+        self.all_seqs_submitted_event.set()
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
         self.k2proc.stdin.write(self.fake_sequence.format('END'))
@@ -305,7 +305,7 @@ class Server:
         """Wait for processing and threads to terminate and exit."""
         while self.lock:
             self.logger.debug('Waiting for processing to finish')
-        self.event.set()
+        self.terminate_event.set()
         while True:
             if all([not x.is_alive() for x in
                     [self.recv_thread, self.return_thread]]):
