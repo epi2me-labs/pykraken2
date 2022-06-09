@@ -1,4 +1,4 @@
-"""pykraken setup.py."""
+"""pykraken2 server/client."""
 
 import argparse
 import importlib
@@ -19,8 +19,6 @@ def _log_level():
     """Parser to set logging level and acquire software version/commit."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter, add_help=False)
-
-    # parser.add_argument('--version', action='version', version=get_version())
 
     modify_log_level = parser.add_mutually_exclusive_group()
     modify_log_level.add_argument(

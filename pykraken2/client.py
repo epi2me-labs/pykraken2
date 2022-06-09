@@ -1,12 +1,4 @@
-"""
-K2client.py.
-
-Main thread acquires lock from the server. Read chunks of sequence data and
-feed this to the server.
-
-recv_thread receives results back from the server, and listens for a DONE
-message before terminating.
-"""
+"""pykraken2 client module."""
 
 import argparse
 import threading
@@ -22,9 +14,10 @@ from pykraken2.server import KrakenSignals
 
 
 class Client:
-    """Client class to stream sequence data to kraken server."""
+    """Client class to stream sequence data to kraken2  server."""
 
-    def __init__(self, address, ports, sample_id: str):
+    def __init__(
+            self,  sample_id: str, address='localhost', ports=[5555, 5556]):
         """Init function.
 
         :param address: server address
@@ -37,7 +30,7 @@ class Client:
         self.sample_id = sample_id
         self.context = zmq.Context()
         self.active = True
-        self.event = threading.Event()
+        self.terminate_event = threading.Event()
 
     def process_fastq(self, fastq):
         """Process a fastq file."""
@@ -62,16 +55,16 @@ class Client:
                 self.logger.info('Waiting for lock on server')
 
         send_thread = Thread(
-            target=self._send_worker, args=(fastq, send_socket, self.event))
+            target=self._send_worker, args=(fastq, send_socket))
         send_thread.start()
 
         for chunk in self._receiver():
             yield chunk
 
-    def _send_worker(self, fastq, socket, event: threading.Event):
+    def _send_worker(self, fastq, socket):
 
         with open(fastq, 'r') as fh:
-            while not event.is_set():
+            while not self.terminate_event.is_set():
                 # There was a suggestion to send all the reads from a sample
                 # as a single message. But this would require reading the whole
                 # fastq file into memory first.
@@ -133,12 +126,12 @@ class Client:
 
     def terminate(self):
         """Terminate the client."""
-        self.event.set()
+        self.terminate_event.set()
 
 
 def main(args):
     """Entry point to run a kraken2 client."""
-    client = Client(args.ports, args.out, args.sample_id)
+    client = Client(args.sample_id, args.ports, args.out)
     client.process_fastq(args.fastq)
 
 
@@ -153,7 +146,7 @@ def argparser():
     parser.add_argument(
         "fastq")
     parser.add_argument(
-        "--ports", default=[5556, 5561],
+        "--ports", default=[5555, 5556],
         nargs='+',
         help="")
     parser.add_argument(
@@ -162,9 +155,4 @@ def argparser():
     parser.add_argument(
         "--sample_id", default="no_sample",
         help="")
-    args = parser.parse_args()
-    return args
-
-
-if __name__ == '__main__':
-    main(argparser())
+    return parser

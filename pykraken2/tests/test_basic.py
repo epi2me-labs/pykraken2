@@ -1,4 +1,4 @@
-"""pykraken tests."""
+"""pykraken2 tests."""
 
 from pathlib import Path
 import subprocess as sub
@@ -58,7 +58,7 @@ class SimpleTest(unittest.TestCase):
         to the server and receiving the DONE message. So would not normally
         need to use terminate()
         """
-        client = Client(self.address, self.ports, 'id1')
+        client = Client('id1', self.address, self.ports)
         client.process_fastq(self.fastq2)
         client.terminate()
 
@@ -69,7 +69,7 @@ class SimpleTest(unittest.TestCase):
             self.k2_binary, self.threads)
         server.run()
 
-        client = Client(self.address, self.ports, 'id1')
+        client = Client('id1', self.address, self.ports)
         result = [x for x in client.process_fastq(self.fastq1)]
         with open(self.expected_output1, 'r') as corr_fh:
             corr_line = corr_fh.readlines()
@@ -88,7 +88,7 @@ class SimpleTest(unittest.TestCase):
         from using kraken2 directly.
         """
         def client_runner(sample_id, input_, results):
-            client = Client(self.address, self.ports, sample_id)
+            client = Client(sample_id, self.address, self.ports)
             for chunk in client.process_fastq(input_):
                 results.extend(chunk)
 

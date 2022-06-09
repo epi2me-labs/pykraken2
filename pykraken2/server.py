@@ -49,7 +49,7 @@ class Server:
     CLASSIFIED_READS = 'kraken2.classified.fastq'
     UNCLASSIFIED_READS = 'kraken2.unclassified.fastq'
     FAKE_SEQUENCE_LENGTH = 50
-    K2_READBUF_SIZE = 20  # TODO: is this tied to kraken2 executable?
+    K2_BATCH_SIZE = 20
 
     def __init__(
             self, kraken_db_dir, address='localhost', ports=[5555, 5556],
@@ -90,7 +90,7 @@ class Server:
         # Are we waiting for processing of a sample to start
         self.start_sample_event = threading.Event()
         self.start_sample_event.set()
-
+        # Signal to the threads to exit
         self.terminate_event = threading.Event()
 
         self.fake_sequence = (
@@ -101,7 +101,7 @@ class Server:
 
         self.flush_seqs = "".join([
             self.fake_sequence.format(f"DUMMY_{x}")
-            for x in range(self.K2_READBUF_SIZE)])
+            for x in range(self.K2_BATCH_SIZE)])
 
         # --batch-size sets number of reads that kraken will process before
         # writing results
@@ -117,7 +117,7 @@ class Server:
             '--unbuffered-output',
             '--db', self.kraken_db_dir,
             '--threads', str(self.threads),
-            '--batch-size', str(self.K2_READBUF_SIZE),
+            '--batch-size', str(self.K2_BATCH_SIZE),
             '/dev/fd/0'
         ]
 
@@ -129,11 +129,11 @@ class Server:
         self.logger.info('Loading kraken2 database')
         start = datetime.datetime.now()
 
-        while True:
-            stderr = self.k2proc.stderr.readline()
-            if 'done' in stderr:
-                self.logger.info('Database loaded. Binding to input socket')
-                break
+        # while True:
+        #     stderr = self.k2proc.stderr.readline()
+        #     if 'done' in stderr:
+        #         self.logger.info('Database loaded. Binding to input socket')
+        #         break
 
         end = datetime.datetime.now()
         delta = end - start
@@ -331,9 +331,4 @@ def argparser():
     parser.add_argument('--ports', nargs='+')
     parser.add_argument('--threads', default=8)
     parser.add_argument('--k2-binary', default='kraken2')
-    args = parser.parse_args()
-    return args
-
-
-if __name__ == '__main__':
-    main(argparser())
+    return parser
