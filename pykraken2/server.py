@@ -108,7 +108,10 @@ class Server:
         self.logger.info('k2 binary', k2_binary)
 
     def run(self):
-        """Start the server."""
+        """Start the server.
+
+        :raises IOError zmq cannot bind socket.
+        """
         # TODO: outputs should go to a temp. directory that we clean up
         #       maybe as optional argument to ease logging/debugging.
         cmd = [
@@ -129,22 +132,16 @@ class Server:
         self.logger.info('Loading kraken2 database')
         start = datetime.datetime.now()
 
-        # while True:
-        #     stderr = self.k2proc.stderr.readline()
-        #     if 'done' in stderr:
-        #         self.logger.info('Database loaded. Binding to input socket')
-        #         break
-
         end = datetime.datetime.now()
         delta = end - start
         self.logger.info(f'Kraken database loading duration: {delta}')
 
         try:
             self.input_socket.bind(f'tcp://{self.address}:{self.ports[0]}')
-        except zmq.error.ZMQError:
-            exit(
-                'Port in use: '
-                f'Try "kill -9 `lsof -i tcp:{self.ports[0]}`"')
+        except zmq.error.ZMQError as e:
+            raise IOError(
+                f'Port in use: Try "kill -9 `lsof -i tcp:{self.ports[0]}`"')\
+                from e
 
         self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
 
@@ -155,40 +152,6 @@ class Server:
         self.return_thread = Thread(
             target=self.return_results)
         self.return_thread.start()
-
-    def do_final_chunk(self):
-        """
-        Process the final chunk of data from a sample.
-
-        All data has been submitted to the K2 subprocess along with a stop
-        sentinel and dummy seqs to flush.
-        Search for this sentinel and send all lines before it to the client
-        along with a DONE message.
-        """
-        lines = []
-
-        while True:
-            line = self.k2proc.stdout.readline()
-
-            if line.startswith('U\tEND'):
-                self.logger.info('Found termination sentinel')
-
-                final_bit = "".join(lines).encode('UTF-8')
-                self.return_socket.send_multipart(
-                    [packb(KrakenSignals.NOT_DONE.value), final_bit])
-                self.return_socket.recv()
-
-                # Client can receive no more messages after the
-                # DONE signal is returned
-                # TODO: why are we sending the a list?
-                self.return_socket.send_multipart(
-                    [packb(KrakenSignals.DONE.value),
-                     packb(KrakenSignals.DONE.value)])
-                self.return_socket.recv()
-
-                self.logger.debug('Stop sentinel found')
-                return
-            lines.append(line)
 
     def return_results(self):
         """
@@ -212,8 +175,36 @@ class Server:
                             break
 
                 if self.all_seqs_submitted_event.is_set():
+                    # Get the final chunk from the K2 stdout
                     self.logger.info('Checking for sentinel')
-                    self.do_final_chunk()
+
+                    final_lines = []
+
+                    while True:
+                        line = self.k2proc.stdout.readline()
+
+                        if line.startswith('U\tEND'):
+                            self.logger.info('Found termination sentinel')
+
+                            final_bit = "".join(final_lines).encode('UTF-8')
+                            self.return_socket.send_multipart(
+                                [packb(KrakenSignals.NOT_DONE.value),
+                                 final_bit])
+                            self.return_socket.recv()
+
+                            # Client can receive no more messages after the
+                            # DONE signal is returned
+                            # TODO: why are we sending the a list?
+                            self.return_socket.send_multipart(
+                                [packb(KrakenSignals.DONE.value),
+                                 packb(KrakenSignals.DONE.value)])
+                            self.return_socket.recv()
+
+                            self.logger.debug('Stop sentinel found')
+                            break
+                        else:
+                            final_lines.append(line)
+
                     self.logger.info('Releasing lock')
                     self.lock = False
                     continue
