@@ -29,12 +29,12 @@ class Client:
         self.send_port, self.recv_port = ports
         self.sample_id = sample_id
         self.context = zmq.Context()
-        self.active = True
         self.terminate_event = threading.Event()
 
     def process_fastq(self, fastq):
         """Process a fastq file."""
-        send_socket = self.context.socket(zmq.REQ)
+        send_context = zmq.Context()
+        send_socket = send_context.socket(zmq.REQ)
         send_socket.connect(f"tcp://{self.address}:{self.send_port}")
 
         while True:
@@ -60,6 +60,11 @@ class Client:
 
         for chunk in self._receiver():
             yield chunk
+
+        send_thread.join()
+
+        send_socket.close()
+        send_context.term()
 
     def _send_worker(self, fastq, socket):
 
@@ -92,14 +97,19 @@ class Client:
 
     def _receiver(self):
         """Worker to receive results."""
-        context = self.context
+        context = zmq.Context()
         socket = context.socket(zmq.REP)
         poller = zmq.Poller()
         poller.register(socket, flags=zmq.POLLIN)
 
-        while self.active:
+        # TODO: If Linger not set, we get stuck somewhere.
+        # I think it means there are unsent messages and the socket will not
+        # get closed with default -1. With this setm it discards unsent
+        # messages after 1s. Fix this
+        socket.setsockopt(zmq.LINGER, 1)
+
+        while not self.terminate_event.is_set():
             try:
-                # TODO: should be an arbitrary server
                 socket.bind(f'tcp://{self.address}:{self.recv_port}')
             except zmq.error.ZMQError as e:
                 self.logger.warn(
@@ -111,15 +121,16 @@ class Client:
             time.sleep(1)
         self.logger.info("receive_results thread listening")
 
-        while self.active:
+        while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
                 status, result = socket.recv_multipart()
-                socket.send(b'Recevied')
+                socket.send(b'Received')
                 if unpackb(status) == KrakenSignals.DONE.value:
                     self.logger.info(
                         'Received data processing complete message')
                     break
-                yield result.decode('UTF-8')
+                else:
+                    yield result.decode('UTF-8')
 
         socket.close()
         context.term()

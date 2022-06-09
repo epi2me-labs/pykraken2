@@ -72,7 +72,7 @@ class SimpleTest(unittest.TestCase):
         client.process_fastq(self.fastq2)
         client.terminate()
 
-    def test_004_process_fastq(self):
+    def test_010_process_fastq(self):
         """Test single client."""
         server = Server(
             self.database, self.address, self.ports,
@@ -81,18 +81,47 @@ class SimpleTest(unittest.TestCase):
 
         client = Client('id1', self.address, self.ports)
         result = [x for x in client.process_fastq(self.fastq1)]
+        server.terminate()
+
         with open(self.expected_output1, 'r') as corr_fh:
             corr_line = corr_fh.readlines()
             corr_str = ''.join(corr_line)
 
             client_str = ''.join(result)
             self.assertEqual(corr_str, client_str)
-        server.terminate()
 
-    def test_005_multi_client(self):
+    def test_011_process_consecutive_fastq(self):
+        """Run multiple files through a single Client instance.
+
+        The use case for this would be the processing of a single sample
+        split between multiple files.
+        """
+        server = Server(
+            self.database, self.address, self.ports,
+            self.k2_binary, self.threads)
+        server.run()
+
+        client = Client('id1', self.address, self.ports)
+
+        result = []
+        for file_ in [self.fastq1, self.fastq2]:
+            result.extend([x for x in client.process_fastq(file_)])
+
+        expected_str = ""
+        for exp in [self.expected_output1, self.expected_output2]:
+            with open(exp, 'r') as fh:
+                exp_lines = fh.readlines()
+                expected_str += ''.join(exp_lines)
+
+        client_str = ''.join(result)
+        server.terminate()
+        self.assertEqual(expected_str, client_str)
+
+    def test_020_multi_client(self):
         """Client/server integration testing.
 
         A server instance and two client instances are run on threads.
+
         The results yielded by client.process_fastq and saved to a list.
         These results are compared to expected kraken2 results generated
         from using kraken2 directly.
