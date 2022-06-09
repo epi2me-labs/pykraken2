@@ -1,9 +1,13 @@
 """pykraken2 tests."""
 
 from pathlib import Path
+import shutil
 import subprocess as sub
+import tempfile
 from threading import Thread
 import unittest
+
+import portpicker
 
 from pykraken2.client import Client
 from pykraken2.server import Server
@@ -16,22 +20,28 @@ class SimpleTest(unittest.TestCase):
     def setUpClass(cls):
         """Set paths and other variables for tests."""
         data_dir = Path(__file__).parent / 'test_data'
-        cls.outdir = data_dir / 'output'
+        cls.out_dir = tempfile.mkdtemp()
+        # cls.out_dir = data_dir / 'output'
         cls.database = data_dir / 'db'
         cls.fastq1 = data_dir / 'reads1.fq'
         cls.fastq2 = data_dir / 'reads2.fq'
         cls.expected_output1 = data_dir / 'correct_output' / 'k2out1.tsv'
         cls.expected_output2 = data_dir / 'correct_output' / 'k2out2.tsv'
+        # cls.ports = free_ports()
         cls.ports = [5555, 5556]
         cls.address = '127.0.0.1'
         cls.threads = 4
-        cls.k2_binary = Path(
-            __file__).parent.parent.parent / 'venv' / 'bin' / 'kraken2'
+        cls.k2_binary = 'kraken2'
+
+    @classmethod
+    def tearDownClass(cls):
+        """Remove temporary files on test completion."""
+        shutil.rmtree(cls.out_dir)
 
     def tearDown(self):
         """Clean up after each test."""
-        for file in Path(self.outdir).glob('**/*'):
-            file.unlink()
+        for file_ in Path(self.out_dir).glob('**/*'):
+            file_.unlink()
 
     def test_001_check_kraken_binary(self):
         """Test the bundled kraken2 binary."""
@@ -125,3 +135,26 @@ class SimpleTest(unittest.TestCase):
                 self.assertEqual(corr_str, client_str)
 
         server.terminate()
+
+
+def free_ports(number=2, lowest=1024):
+    """Find a set of consecutive free ports.
+
+    :param number: the number of ports required.
+    :param lowest: lowest permissable port.
+
+    ..note:: there maybe be race conditions, such that the
+        returned list is not guaranteed to be free ports.
+    """
+    port_list = list()
+    while True:
+        if portpicker.is_port_free(lowest):
+            port_list.append(lowest)
+            if len(port_list) == number:
+                break
+        else:
+            port_list = list()
+        lowest += 1
+        if lowest == 65536:
+            raise RuntimeError("Cannot find free port set.")
+    return port_list
