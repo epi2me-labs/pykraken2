@@ -73,12 +73,6 @@ class Server:
         self.ports = ports
         self.active = True
 
-        self.input_context = zmq.Context()
-        self.input_socket = self.input_context.socket(zmq.REP)
-
-        self.return_context = zmq.Context()
-        self.return_socket = self.return_context.socket(zmq.REQ)
-
         self.recv_thread = None
         self.return_thread = None
         self.k2proc = None
@@ -136,15 +130,6 @@ class Server:
         delta = end - start
         self.logger.info(f'Kraken database loading duration: {delta}')
 
-        try:
-            self.input_socket.bind(f'tcp://{self.address}:{self.ports[0]}')
-        except zmq.error.ZMQError as e:
-            raise IOError(
-                f'Port in use: Try "kill -9 `lsof -i tcp:{self.ports[0]}`"')\
-                from e
-
-        self.return_socket.connect(f"tcp://{self.address}:{self.ports[1]}")
-
         self.recv_thread = Thread(
             target=self.recv)
         self.recv_thread.start()
@@ -162,6 +147,10 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels.
         """
+        context = zmq.Context()
+        socket = context.socket(zmq.REQ)
+        socket.connect(f"tcp://{self.address}:{self.ports[1]}")
+
         while not self.terminate_event.is_set():
             if self.lock:  # Is a client connected?
                 if self.start_sample_event.is_set():
@@ -187,18 +176,18 @@ class Server:
                             self.logger.info('Found termination sentinel')
 
                             final_bit = "".join(final_lines).encode('UTF-8')
-                            self.return_socket.send_multipart(
+                            socket.send_multipart(
                                 [packb(KrakenSignals.NOT_DONE.value),
                                  final_bit])
-                            self.return_socket.recv()
+                            socket.recv()
 
                             # Client can receive no more messages after the
                             # DONE signal is returned
                             # TODO: why are we sending the a list?
-                            self.return_socket.send_multipart(
+                            socket.send_multipart(
                                 [packb(KrakenSignals.DONE.value),
                                  packb(KrakenSignals.DONE.value)])
-                            self.return_socket.recv()
+                            socket.recv()
 
                             self.logger.debug('Stop sentinel found')
                             break
@@ -213,15 +202,15 @@ class Server:
                 # TODO: don't hardcode 10000
                 stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
 
-                self.return_socket.send_multipart(
+                socket.send_multipart(
                     [packb(KrakenSignals.NOT_DONE.value), stdout])
-                self.return_socket.recv()
+                socket.recv()
 
             else:
                 self.logger.info('Waiting for lock')
                 time.sleep(1)
-        self.return_socket.close()
-        self.return_context.term()
+        socket.close()
+        context.term()
         self.logger.info('Return thread exiting')
 
     def recv(self):
@@ -231,18 +220,27 @@ class Server:
         Listens for messages from the input socket and forward them to
         the appropriate functions.
         """
+        context = zmq.Context()
+        socket = context.socket(zmq.REP)
+        try:
+            socket.bind(f'tcp://{self.address}:{self.ports[0]}')
+        except zmq.error.ZMQError as e:
+            raise IOError(
+                f'Port in use: Try "kill -9 `lsof -i tcp:{self.ports[0]}`"') \
+                from e
+
         poller = zmq.Poller()
-        poller.register(self.input_socket, flags=zmq.POLLIN)
+        poller.register(socket, flags=zmq.POLLIN)
         self.logger.info('Waiting for connections')
 
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
-                query = (self.input_socket.recv_multipart())
+                query = (socket.recv_multipart())
                 route = KrakenSignals(unpackb(query[0])).name.lower()
                 msg = getattr(self, route)(query[1])
-                self.input_socket.send(msg)
-        self.input_socket.close()
-        self.input_context.term()
+                socket.send(msg)
+        socket.close()
+        context.term()
         self.logger.info('recv thread existing')
 
     def start(self, sample_id) -> bytes:
