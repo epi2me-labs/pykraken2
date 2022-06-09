@@ -86,9 +86,10 @@ class Server:
         # If a client is connected, lock prevents other connections
         self.lock = False
         # Have all seqs from current sample been passed to kraken
-        self.all_seqs_submitted = False
+        self.all_seqs_submitted_evt = threading.Event()
         # Are we waiting for processing of a sample to start
-        self.starting_sample = True
+        self.start_sample_evt = threading.Event()
+        self.start_sample_evt.set()
 
         self.event = threading.Event()
 
@@ -200,17 +201,17 @@ class Server:
         """
         while not event.is_set():
             if self.lock:  # Is a client connected?
-                if self.starting_sample:
+                if self.start_sample_evt.is_set():
                     # remove any remaining dummy seqs from previous
                     # samples
                     while True:
                         line = self.k2proc.stdout.readline()
                         # TODO: Don't hardcode this
                         if line.startswith('U\tSTART'):
-                            self.starting_sample = False
+                            self.start_sample_evt.clear()
                             break
 
-                if self.all_seqs_submitted:
+                if self.all_seqs_submitted_evt.is_set():
                     self.logger.info('Checking for sentinel')
                     self.do_final_chunk()
                     self.logger.info('Releasing lock')
@@ -263,8 +264,8 @@ class Server:
         if self.lock is False:
             # TODO: don't hardcode the sequence name
             self.k2proc.stdin.write(self.fake_sequence.format('START'))
-            self.starting_sample = True
-            self.all_seqs_submitted = False
+            self.start_sample_evt.set()
+            self.all_seqs_submitted_evt.clear()
             self.lock = True  # Starts sending results back
             self.logger.info(f"Got lock for {sample_id}")
             reply = 1
@@ -289,7 +290,7 @@ class Server:
         Insert STOP sentinel into kraken2 stdin.
         Flush the buffer with some dummy seqs.
         """
-        self.all_seqs_submitted = True
+        self.all_seqs_submitted_evt.set()
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
         self.k2proc.stdin.write(self.fake_sequence.format('END'))
