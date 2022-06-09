@@ -126,41 +126,44 @@ class SimpleTest(unittest.TestCase):
         These results are compared to expected kraken2 results generated
         from using kraken2 directly.
         """
-        def client_runner(sample_id, input_, results):
+        def client_runner(sample_id, input_, _results):
             client = Client(sample_id, self.address, self.ports)
             for chunk in client.process_fastq(input_):
-                results.extend(chunk)
+                _results.extend(chunk)
 
         server = Server(
             self.database, self.address, self.ports,
             self.k2_binary, self.threads)
-        server_thread = Thread(target=server.run)
-        server_thread.start()
+        server.run()
 
         # Data for 2 client instances
         # [Sample_id, input, expected output, empty results list]
         client_data = [
-            ['id1', self.fastq1, self.expected_output1, []],
-            ['id2', self.fastq2, self.expected_output2, []]
+            ['id1', self.fastq1, self.expected_output1],
+            ['id2', self.fastq2, self.expected_output2]
         ]
 
+        threads = []
+        results = []
         for cdata in client_data:
+            res = []
+            results.append(res)
             thread = Thread(
-                target=client_runner, args=(cdata[0], cdata[1], cdata[3]))
-            # Put thread object onto client_data
-            cdata.append(thread)
+                target=client_runner, args=(cdata[0], cdata[1], res))
+            threads.append(thread)
             thread.start()
 
-        for t in client_data:
-            t[4].join()
+        for t in threads:
+            t.join()
 
         # Compare the outputs
-        for t in client_data:
-            with open(t[2], 'r') as corr_fh:
+        for result, cdata in zip(results, client_data):
+            expected = cdata[2]
+            with open(expected, 'r') as corr_fh:
                 corr_line = corr_fh.readlines()
                 corr_str = ''.join(corr_line)
 
-                client_str = ''.join(t[3])
+                client_str = ''.join(result)
                 self.assertEqual(corr_str, client_str)
 
         server.terminate()
