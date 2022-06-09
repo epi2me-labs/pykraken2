@@ -30,7 +30,7 @@ class KrakenSignals(Enum):
 
 class Server:
     """
-    Server class.
+    Kraken2 sever.
 
     This server runs two threads:
 
@@ -51,7 +51,9 @@ class Server:
     FAKE_SEQUENCE_LENGTH = 50
     K2_READBUF_SIZE = 20  # TODO: is this tied to kraken2 executable?
 
-    def __init__(self, address, ports, kraken_db_dir, k2_binary, threads):
+    def __init__(
+            self, kraken_db_dir, address='localhost', ports=[5555, 5556],
+            k2_binary='kraken2', threads=1):
         """
         Sever constructor.
 

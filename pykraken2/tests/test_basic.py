@@ -46,7 +46,7 @@ class SimpleTest(unittest.TestCase):
     def test_002_create_server(self):
         """Test the server API."""
         server = Server(
-            self.address, self.ports, self.database,
+            self.database, self.address, self.ports,
             self.k2_binary, self.threads)
         server.run()
         server.terminate()
@@ -65,7 +65,7 @@ class SimpleTest(unittest.TestCase):
     def test_004_process_fastq(self):
         """Test single client."""
         server = Server(
-            self.address, self.ports, self.database,
+            self.database, self.address, self.ports,
             self.k2_binary, self.threads)
         server.run()
 
@@ -93,7 +93,7 @@ class SimpleTest(unittest.TestCase):
                 results.extend(chunk)
 
         server = Server(
-            self.address, self.ports, self.database,
+            self.database, self.address, self.ports,
             self.k2_binary, self.threads)
         server_thread = Thread(target=server.run)
         server_thread.start()
