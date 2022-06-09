@@ -13,6 +13,7 @@ import threading
 from threading import Thread
 import time
 
+from msgpack import packb, unpackb
 import zmq
 
 import pykraken2
@@ -47,9 +48,10 @@ class Client:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
             send_socket.send_multipart(
-                [KrakenSignals.START.value, self.sample_id.encode('UTF-8')])
+                [packb(KrakenSignals.START.value),
+                 self.sample_id.encode('UTF-8')])
 
-            lock = int(send_socket.recv())
+            lock = unpackb(send_socket.recv())
 
             if lock:
                 self.logger.info('Acquired lock on server')
@@ -81,13 +83,14 @@ class Client:
 
                 if seq:
                     socket.send_multipart(
-                        [KrakenSignals.RUN_BATCH.value, seq.encode('UTF-8')])
+                        [packb(KrakenSignals.RUN_BATCH.value),
+                         seq.encode('UTF-8')])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
                     socket.recv()
                 else:
                     socket.send_multipart(
-                        [KrakenSignals.STOP.value,
+                        [packb(KrakenSignals.STOP.value),
                          self.sample_id.encode('UTF-8')])
                     socket.recv()
                     self.logger.info('Sending data finished')
@@ -119,7 +122,7 @@ class Client:
             if poller.poll(timeout=1000):
                 status, result = socket.recv_multipart()
                 socket.send(b'Recevied')
-                if status == KrakenSignals.DONE.value:
+                if unpackb(status) == KrakenSignals.DONE.value:
                     self.logger.info(
                         'Received data processing complete message')
                     break

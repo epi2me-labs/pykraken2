@@ -9,6 +9,7 @@ import threading
 from threading import Thread
 import time
 
+from msgpack import packb, unpackb
 import zmq
 
 import pykraken2
@@ -16,15 +17,15 @@ from pykraken2 import _log_level
 
 
 class KrakenSignals(Enum):
-    """Client/Sever communication enum."""
+    """Client/Server communication enum."""
 
     # client to server
-    START = b'1'
-    STOP = b'2'
-    RUN_BATCH = b'3'
+    START = 1
+    STOP = 2
+    RUN_BATCH = 3
     # server to client
-    NOT_DONE = b'50'
-    DONE = b'51'
+    NOT_DONE = 50
+    DONE = 51
 
 
 class Server:
@@ -172,14 +173,15 @@ class Server:
 
                 final_bit = "".join(lines).encode('UTF-8')
                 self.return_socket.send_multipart(
-                    [KrakenSignals.NOT_DONE.value, final_bit])
+                    [packb(KrakenSignals.NOT_DONE.value), final_bit])
                 self.return_socket.recv()
 
                 # Client can receive no more messages after the
                 # DONE signal is returned
                 # TODO: why are we sending the a list?
                 self.return_socket.send_multipart(
-                    [KrakenSignals.DONE.value, KrakenSignals.DONE.value])
+                    [packb(KrakenSignals.DONE.value),
+                     packb(KrakenSignals.DONE.value)])
                 self.return_socket.recv()
 
                 self.logger.debug('Stop sentinel found')
@@ -219,7 +221,7 @@ class Server:
                 stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
 
                 self.return_socket.send_multipart(
-                    [KrakenSignals.NOT_DONE.value, stdout])
+                    [packb(KrakenSignals.NOT_DONE.value), stdout])
                 self.return_socket.recv()
 
             else:
@@ -242,8 +244,8 @@ class Server:
 
         while not event.is_set():
             if poller.poll(timeout=1000):
-                query = self.input_socket.recv_multipart()
-                route = KrakenSignals(query[0]).name.lower()
+                query = (self.input_socket.recv_multipart())
+                route = KrakenSignals(unpackb(query[0])).name.lower()
                 msg = getattr(self, route)(query[1])
                 self.input_socket.send(msg)
         self.input_socket.close()
@@ -264,10 +266,10 @@ class Server:
             self.all_seqs_submitted = False
             self.lock = True  # Starts sending results back
             self.logger.info(f"Got lock for {sample_id}")
-            reply = '1'
+            reply = 1
         else:
-            reply = '0'
-        return reply.encode('UTF-8')
+            reply = 0
+        return packb(reply)
 
     def run_batch(self, msg: bytes) -> bytes:
         """Process a data chunk.
