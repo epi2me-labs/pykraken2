@@ -75,9 +75,8 @@ class Client:
                 # fastq file into memory first.
                 # TODO: better to send a fixed number of lines, even one record
                 #       at a time?
-                # NEil: I thought sending single records at a time would slow
-                # things down, but I will test this.
-                seq = fh.read(100000)  # Increase?
+
+                seq = fh.read(100000)
 
                 if seq:
                     socket.send_multipart(
@@ -119,7 +118,7 @@ class Client:
             else:
                 break
             time.sleep(1)
-        self.logger.info("receive_results thread listening")
+        self.logger.info("_receiver listening")
 
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):

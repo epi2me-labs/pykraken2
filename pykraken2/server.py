@@ -2,11 +2,10 @@
 
 
 import argparse
-import datetime
 from enum import Enum
 import subprocess
 import threading
-from threading import Thread
+from threading import Lock, Thread
 import time
 
 from msgpack import packb, unpackb
@@ -30,7 +29,7 @@ class KrakenSignals(Enum):
 
 class Server:
     """
-    Kraken2 sever.
+    Kraken2 server.
 
     This server runs two threads:
 
@@ -77,8 +76,8 @@ class Server:
         self.return_thread = None
         self.k2proc = None
 
-        # If a client is connected, lock prevents other connections
-        self.lock = False
+        # self.client_connected = threading.Event()
+        self.client_lock = Lock()
         # Have all seqs from current sample been passed to kraken
         self.all_seqs_submitted_event = threading.Event()
         # Are we waiting for processing of a sample to start
@@ -122,13 +121,7 @@ class Server:
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
 
-        # Wait for database loading before binding to input socket
         self.logger.info('Loading kraken2 database')
-        start = datetime.datetime.now()
-
-        end = datetime.datetime.now()
-        delta = end - start
-        self.logger.info(f'Kraken database loading duration: {delta}')
 
         self.recv_thread = Thread(
             target=self.recv)
@@ -152,7 +145,7 @@ class Server:
         socket.connect(f"tcp://{self.address}:{self.ports[1]}")
 
         while not self.terminate_event.is_set():
-            if self.lock:  # Is a client connected?
+            if self.client_lock.locked():  # Is a client connected?
                 if self.start_sample_event.is_set():
                     # remove any remaining dummy seqs from previous
                     # samples
@@ -195,7 +188,7 @@ class Server:
                             final_lines.append(line)
 
                     self.logger.info('Releasing lock')
-                    self.lock = False
+                    self.client_lock.release()
                     continue
 
                 # Send kraken enough reads so it will spit results out
@@ -250,12 +243,12 @@ class Server:
         If no current lock, set lock and inform client to start sending data.
         If lock acquired, return 1 else return 0.
         """
-        if self.lock is False:
+        if not self.client_lock.locked():
+            self.client_lock.acquire()
             # TODO: don't hardcode the sequence name
             self.k2proc.stdin.write(self.fake_sequence.format('START'))
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
-            self.lock = True  # Starts sending results back
             self.logger.info(f"Got lock for {sample_id}")
             reply = True
         else:
@@ -292,17 +285,10 @@ class Server:
 
     def terminate(self):
         """Wait for processing and threads to terminate and exit."""
-        while self.lock:
-            self.logger.debug('Waiting for processing to finish')
-            time.sleep(1)
+        self.logger.debug('Waiting for processing to finish')
         self.terminate_event.set()
         self.recv_thread.join()
         self.return_thread.join()
-        # while True:
-        #     if all([not x.is_alive() for x in
-        #             [self.recv_thread, self.return_thread]]):
-        #         break
-        #     time.sleep(1)
         self.logger.info('Exiting!')
 
 
