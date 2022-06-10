@@ -98,7 +98,7 @@ class Server:
 
         # --batch-size sets number of reads that kraken will process before
         # writing results
-        self.logger.info('k2 binary', k2_binary)
+        self.logger.info(f'k2 binary: {k2_binary}')
 
     def run(self):
         """Start the server.
@@ -294,7 +294,8 @@ class Server:
 
 def main(args):
     """Entry point to run a kraken2 server."""
-    server = Server(args.ports, args.database, args.k2_binary, args.threads)
+    server = Server(
+        args.database, args.address, args.ports, args.k2_binary, args.threads)
     server.run()
 
 
@@ -305,8 +306,8 @@ def argparser():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         parents=[_log_level()], add_help=False)
     parser.add_argument('database')
-    # TODO: we only seem to use one port.
-    parser.add_argument('--ports', nargs='+')
+    parser.add_argument("--address", default='localhost')
+    parser.add_argument('--ports', nargs='+', default=[5555, 5556])
     parser.add_argument('--threads', default=8)
     parser.add_argument('--k2-binary', default='kraken2')
     return parser

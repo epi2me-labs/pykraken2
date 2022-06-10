@@ -103,8 +103,8 @@ class Client:
 
         # TODO: If Linger not set, we get stuck somewhere.
         # I think it means there are unsent messages and the socket will not
-        # get closed with default -1. With this setm it discards unsent
-        # messages after 1s. Fix this
+        # get closed with default -1. With this set it discards unsent
+        # messages after 1s. Look into this
         socket.setsockopt(zmq.LINGER, 1)
 
         while not self.terminate_event.is_set():
@@ -141,8 +141,11 @@ class Client:
 
 def main(args):
     """Entry point to run a kraken2 client."""
-    client = Client(args.sample_id, args.ports, args.out)
-    client.process_fastq(args.fastq)
+    client = Client(args.sample_id, args.address, args.ports)
+
+    with open(args.out, 'w') as fh:
+        for chunk in client.process_fastq(args.fastq):
+            fh.write(chunk)
 
 
 def argparser():
@@ -155,6 +158,9 @@ def argparser():
     # port isn't a concern for the user.
     parser.add_argument(
         "fastq")
+    parser.add_argument(
+        "--address", default='localhost'
+    )
     parser.add_argument(
         "--ports", default=[5555, 5556],
         nargs='+',
