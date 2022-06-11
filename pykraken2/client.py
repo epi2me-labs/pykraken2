@@ -17,7 +17,7 @@ class Client:
     """Client class to stream sequence data to kraken2  server."""
 
     def __init__(
-            self,  address='localhost', ports=[5555, 5556]):
+            self, address='localhost', ports=[5555, 5556]):
         """Init function.
 
         :param address: server address
@@ -134,8 +134,9 @@ class Client:
                     self.logger.info(
                         'Received data processing complete message')
                     break
-                else:
-                    yield payload.decode('UTF-8')
+                elif status == KrakenSignals.NOT_DONE.value:
+                    result = payload.decode('UTF-8')
+                    yield result
 
         socket.close()
         context.term()
