@@ -237,7 +237,6 @@ class Server:
             if poller.poll(timeout=1000):
                 query = socket.recv_multipart()
                 route = KrakenSignals(unpackb(query[0])).name.lower()
-                self.logger.warn(route)
                 msg = getattr(self, route)(*query[1:])
                 socket.send_multipart(msg)
         socket.close()

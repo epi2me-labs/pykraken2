@@ -44,7 +44,6 @@ class Client:
 
             signal, token = send_socket.recv_multipart()
             signal = unpackb(signal)
-            self.logger.warn('moooooo2')
 
             if signal == KrakenSignals.OK_TO_BEGIN.value:
                 self.token = token
