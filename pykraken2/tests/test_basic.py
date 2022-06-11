@@ -31,7 +31,7 @@ class SimpleTest(unittest.TestCase):
         cls.ports = [5555, 5556]
         cls.address = '127.0.0.1'
         cls.threads = 4
-        cls.k2_binary = 'kraken2'
+        cls.k2_binary = 'venv/bin/kraken2'
 
     @classmethod
     def tearDownClass(cls):
@@ -68,7 +68,7 @@ class SimpleTest(unittest.TestCase):
         to the server and receiving the DONE message. So would not normally
         need to use terminate()
         """
-        client = Client('id1', self.address, self.ports)
+        client = Client(self.address, self.ports)
         client.process_fastq(self.fastq2)
         client.terminate()
 
@@ -79,7 +79,7 @@ class SimpleTest(unittest.TestCase):
             self.k2_binary, self.threads)
         server.run()
 
-        client = Client('id1', self.address, self.ports)
+        client = Client(self.address, self.ports)
         result = [x for x in client.process_fastq(self.fastq1)]
         server.terminate()
 
@@ -101,7 +101,7 @@ class SimpleTest(unittest.TestCase):
             self.k2_binary, self.threads)
         server.run()
 
-        client = Client('id1', self.address, self.ports)
+        client = Client(self.address, self.ports)
 
         result = []
         for file_ in [self.fastq1, self.fastq2]:
@@ -126,8 +126,8 @@ class SimpleTest(unittest.TestCase):
         These results are compared to expected kraken2 results generated
         from using kraken2 directly.
         """
-        def client_runner(sample_id, input_, _results):
-            client = Client(sample_id, self.address, self.ports)
+        def client_runner(input_, _results):
+            client = Client(self.address, self.ports)
             for chunk in client.process_fastq(input_):
                 _results.extend(chunk)
 
@@ -139,8 +139,8 @@ class SimpleTest(unittest.TestCase):
         # Data for 2 client instances
         # [Sample_id, input, expected output, empty results list]
         client_data = [
-            ['id1', self.fastq1, self.expected_output1],
-            ['id2', self.fastq2, self.expected_output2]
+            [self.fastq1, self.expected_output1],
+            [self.fastq2, self.expected_output2]
         ]
 
         threads = []
@@ -149,7 +149,7 @@ class SimpleTest(unittest.TestCase):
             res = []
             results.append(res)
             thread = Thread(
-                target=client_runner, args=(cdata[0], cdata[1], res))
+                target=client_runner, args=(cdata[0], res))
             threads.append(thread)
             thread.start()
 
@@ -158,7 +158,7 @@ class SimpleTest(unittest.TestCase):
 
         # Compare the outputs
         for result, cdata in zip(results, client_data):
-            expected = cdata[2]
+            expected = cdata[1]
             with open(expected, 'r') as corr_fh:
                 corr_line = corr_fh.readlines()
                 corr_str = ''.join(corr_line)

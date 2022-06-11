@@ -7,6 +7,8 @@ import subprocess
 import threading
 from threading import Lock, Thread
 import time
+from typing import List
+import uuid
 
 from msgpack import packb, unpackb
 import zmq
@@ -19,12 +21,14 @@ class KrakenSignals(Enum):
     """Client/Server communication enum."""
 
     # client to server
-    START_SAMPLE = 1
-    SAMPLE_FINISHED = 2
+    GET_TOKEN = 1
+    FINISH_TRANSACTION = 2
     RUN_BATCH = 3
     # server to client
     NOT_DONE = 50
     DONE = 51
+    OK_TO_BEGIN = 52
+    PLEASE_WAIT = 53
 
 
 class Server:
@@ -78,6 +82,7 @@ class Server:
 
         # self.client_connected = threading.Event()
         self.client_lock = Lock()
+        self.token = None
         # Have all seqs from current sample been passed to kraken
         self.all_seqs_submitted_event = threading.Event()
         # Are we waiting for processing of a sample to start
@@ -158,6 +163,8 @@ class Server:
 
                 if self.all_seqs_submitted_event.is_set():
                     # Get the final chunk from the K2 stdout
+                    # Do the final checking for sentinel here as checking each
+                    # line is takes too long.
                     self.logger.info('Checking for sentinel')
 
                     final_lines = []
@@ -171,15 +178,15 @@ class Server:
                             final_bit = "".join(final_lines).encode('UTF-8')
                             socket.send_multipart(
                                 [packb(KrakenSignals.NOT_DONE.value),
-                                 final_bit])
+                                 self.token, final_bit])
                             socket.recv()
 
                             # Client can receive no more messages after the
                             # DONE signal is returned
                             # TODO: why are we sending the a list?
                             socket.send_multipart(
-                                [packb(KrakenSignals.DONE.value),
-                                 packb(KrakenSignals.DONE.value)])
+                                [packb(KrakenSignals.DONE.value), self.token,
+                                 packb(None)])
                             socket.recv()
 
                             self.logger.debug('Stop sentinel found')
@@ -196,7 +203,7 @@ class Server:
                 stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
 
                 socket.send_multipart(
-                    [packb(KrakenSignals.NOT_DONE.value), stdout])
+                    [packb(KrakenSignals.NOT_DONE.value), self.token, stdout])
                 socket.recv()
 
             else:
@@ -228,50 +235,57 @@ class Server:
 
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
-                query = (socket.recv_multipart())
+                query = socket.recv_multipart()
                 route = KrakenSignals(unpackb(query[0])).name.lower()
-                msg = getattr(self, route)(query[1])
-                socket.send(msg)
+                self.logger.warn(route)
+                msg = getattr(self, route)(*query[1:])
+                socket.send_multipart(msg)
         socket.close()
         context.term()
         self.logger.info('recv thread existing')
 
-    def start_sample(self, sample_id) -> bytes:
+    def get_token(self) -> List:
         """
-        Get locks on client and start processing a sample.
+        Set a token that client and server share.
 
         If no current lock, set lock and inform client to start sending data.
         If lock acquired, return 1 else return 0.
         """
         if not self.client_lock.locked():
             self.client_lock.acquire()
+            self.token = str(uuid.uuid4()).encode('UTF-8')
             # TODO: don't hardcode the sequence name
             self.k2proc.stdin.write(self.fake_sequence.format('START'))
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
-            self.logger.info(f"Got lock for {sample_id}")
-            reply = True
+            self.logger.info(f"Got lock")
+            reply = [packb(KrakenSignals.OK_TO_BEGIN.value), self.token]
         else:
-            reply = False
-        return packb(reply)
+            reply = [packb(KrakenSignals.PLEASE_WAIT.value), packb(None)]
+        return reply
 
-    def run_batch(self, msg: bytes) -> bytes:
+    def run_batch(self, token, seq: bytes) -> List:
         """Process a data chunk.
 
-        :param msg: a chunk of sequence data.
+        :param seq: a chunk of sequence data.
         """
-        seq = msg.decode('UTF-8')
-        self.k2proc.stdin.write(seq)
+        if token != self.token:
+            self.logger.error('run_batch received incorrect token')
+            return [None, None]
+        self.k2proc.stdin.write(seq.decode('UTF-8'))
         self.k2proc.stdin.flush()
-        return b'Server: Chunk received'
+        return [packb('Server: Chunk received'), packb(None)]
 
-    def sample_finished(self, sample_id: bytes) -> bytes:
+    def finish_transaction(self, token) -> List:
         """
         All data has been sent from a client.
 
         Insert STOP sentinel into kraken2 stdin.
         Flush the buffer with some dummy seqs.
         """
+        if token != self.token:
+            self.logger.error('finish transaction received incorrect token')
+            return [None, None]
         self.all_seqs_submitted_event.set()
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
@@ -279,9 +293,7 @@ class Server:
         self.logger.info('flushing')
         self.k2proc.stdin.write(self.flush_seqs)
         self.logger.info("All dummy seqs written")
-        return (
-            "Got STOP signal from client for "
-            f"{sample_id}").encode('UTF-8')
+        return [packb("Transaction finished"), packb(None)]
 
     def terminate(self):
         """Wait for processing and threads to terminate and exit."""

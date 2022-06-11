@@ -17,19 +17,18 @@ class Client:
     """Client class to stream sequence data to kraken2  server."""
 
     def __init__(
-            self,  sample_id: str, address='localhost', ports=[5555, 5556]):
+            self,  address='localhost', ports=[5555, 5556]):
         """Init function.
 
         :param address: server address
         :param ports:  [send data port, receive results port]
-        :param sample_id:
         """
-        self.logger = pykraken2.get_named_logger(f'Client-{sample_id}')
+        self.logger = pykraken2.get_named_logger('Client}')
         self.address = address
         self.send_port, self.recv_port = ports
-        self.sample_id = sample_id
         self.context = zmq.Context()
         self.terminate_event = threading.Event()
+        self.token = None
 
     def process_fastq(self, fastq):
         """Process a fastq file."""
@@ -41,16 +40,18 @@ class Client:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
             send_socket.send_multipart(
-                [packb(KrakenSignals.START_SAMPLE.value),
-                 self.sample_id.encode('UTF-8')])
+                [packb(KrakenSignals.GET_TOKEN.value)])
 
-            lock = unpackb(send_socket.recv())
+            signal, token = send_socket.recv_multipart()
+            signal = unpackb(signal)
+            self.logger.warn('moooooo2')
 
-            if lock:
-                self.logger.info('Acquired lock on server')
+            if signal == KrakenSignals.OK_TO_BEGIN.value:
+                self.token = token
+                self.logger.info('Acquired server token')
                 # Start thread for receiving input
                 break
-            else:
+            elif signal == KrakenSignals.PLEASE_WAIT.value:
                 time.sleep(1)
                 self.logger.info('Waiting for lock on server')
 
@@ -81,14 +82,14 @@ class Client:
                 if seq:
                     socket.send_multipart(
                         [packb(KrakenSignals.RUN_BATCH.value),
-                         seq.encode('UTF-8')])
+                         self.token, seq.encode('UTF-8')])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
-                    socket.recv()
+                    socket.recv_multipart()
                 else:
                     socket.send_multipart(
-                        [packb(KrakenSignals.SAMPLE_FINISHED.value),
-                         self.sample_id.encode('UTF-8')])
+                        [packb(KrakenSignals.FINISH_TRANSACTION.value),
+                         self.token])
                     socket.recv()
                     self.logger.info('Sending data finished')
                     socket.close()
@@ -122,14 +123,19 @@ class Client:
 
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
-                status, result = socket.recv_multipart()
+                msg, token, payload = socket.recv_multipart()
+                if token != self.token:
+                    raise ValueError(
+                        "Client received results with incorrect token")
+                status = unpackb(msg)
                 socket.send(b'Received')
-                if unpackb(status) == KrakenSignals.DONE.value:
+
+                if status == KrakenSignals.DONE.value:
                     self.logger.info(
                         'Received data processing complete message')
                     break
                 else:
-                    yield result.decode('UTF-8')
+                    yield payload.decode('UTF-8')
 
         socket.close()
         context.term()
@@ -141,7 +147,7 @@ class Client:
 
 def main(args):
     """Entry point to run a kraken2 client."""
-    client = Client(args.sample_id, args.address, args.ports)
+    client = Client(args.address, args.ports)
 
     with open(args.out, 'w') as fh:
         for chunk in client.process_fastq(args.fastq):
@@ -167,8 +173,5 @@ def argparser():
         help="")
     parser.add_argument(
         "--out",
-        help="")
-    parser.add_argument(
-        "--sample_id", default="no_sample",
         help="")
     return parser
