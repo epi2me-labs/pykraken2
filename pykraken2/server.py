@@ -17,7 +17,7 @@ import pykraken2
 from pykraken2 import _log_level
 
 
-class KrakenSignals(Enum):
+class Signals(Enum):
     """Client/Server communication enum."""
 
     # client to server
@@ -25,15 +25,14 @@ class KrakenSignals(Enum):
     FINISH_TRANSACTION = 2
     RUN_BATCH = 3
     # server to client
-    NOT_DONE = 50
-    DONE = 51
+    TRANSACTION_NOT_DONE = 50
+    TRANSACTION_COMPLETE = 51
     OK_TO_BEGIN = 52
-    PLEASE_WAIT = 53
+    WAIT_FOR_TOKEN = 53
 
 
 class Server:
-    """
-    Kraken2 server.
+    """Kraken2 server.
 
     This server runs two threads:
 
@@ -49,10 +48,10 @@ class Server:
 
     """
 
-    CLASSIFIED_READS = 'kraken2.classified.fastq'
-    UNCLASSIFIED_READS = 'kraken2.unclassified.fastq'
     FAKE_SEQUENCE_LENGTH = 50
     K2_BATCH_SIZE = 20
+    START_SENTINEL_NAME = 'START'
+    END_SENTINEL_NAME = 'END'
 
     def __init__(
             self, kraken_db_dir, address='localhost', ports=[5555, 5556],
@@ -108,14 +107,11 @@ class Server:
     def run(self):
         """Start the server.
 
-        :raises IOError zmq cannot bind socket.
+        :raises IOError if zmq cannot bind socket.
         """
-        # TODO: outputs should go to a temp. directory that we clean up
-        #       maybe as optional argument to ease logging/debugging.
         cmd = [
             'stdbuf', '-oL',
             self.k2_binary,
-            '--unbuffered-output',
             '--db', self.kraken_db_dir,
             '--threads', str(self.threads),
             '--batch-size', str(self.K2_BATCH_SIZE),
@@ -156,8 +152,7 @@ class Server:
                     # samples
                     while True:
                         line = self.k2proc.stdout.readline()
-                        # TODO: Don't hardcode this
-                        if line.startswith('U\tSTART'):
+                        if line.startswith(f'U\t{self.START_SENTINEL_NAME}'):
                             self.start_sample_event.clear()
                             break
 
@@ -172,21 +167,13 @@ class Server:
                     while True:
                         line = self.k2proc.stdout.readline()
 
-                        if line.startswith('U\tEND'):
+                        if line.startswith(f'U\t{self.END_SENTINEL_NAME}'):
                             self.logger.info('Found termination sentinel')
 
                             final_bit = "".join(final_lines).encode('UTF-8')
                             socket.send_multipart(
-                                [packb(KrakenSignals.NOT_DONE.value),
+                                [packb(Signals.TRANSACTION_COMPLETE.value),
                                  self.token, final_bit])
-                            socket.recv()
-
-                            # Client can receive no more messages after the
-                            # DONE signal is returned
-                            # TODO: why are we sending the a list?
-                            socket.send_multipart(
-                                [packb(KrakenSignals.DONE.value), self.token,
-                                 packb(None)])
                             socket.recv()
 
                             self.logger.debug('Stop sentinel found')
@@ -198,12 +185,12 @@ class Server:
                     self.client_lock.release()
                     continue
 
-                # Send kraken enough reads so it will spit results out
                 # TODO: don't hardcode 10000
                 stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
 
                 socket.send_multipart(
-                    [packb(KrakenSignals.NOT_DONE.value), self.token, stdout])
+                    [packb(Signals.TRANSACTION_NOT_DONE.value),
+                     self.token, stdout])
                 socket.recv()
 
             else:
@@ -236,7 +223,7 @@ class Server:
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
                 query = socket.recv_multipart()
-                route = KrakenSignals(unpackb(query[0])).name.lower()
+                route = Signals(unpackb(query[0])).name.lower()
                 msg = getattr(self, route)(*query[1:])
                 socket.send_multipart(msg)
         socket.close()
@@ -253,14 +240,14 @@ class Server:
         if not self.client_lock.locked():
             self.client_lock.acquire()
             self.token = str(uuid.uuid4()).encode('UTF-8')
-            # TODO: don't hardcode the sequence name
-            self.k2proc.stdin.write(self.fake_sequence.format('START'))
+            self.k2proc.stdin.write(
+                self.fake_sequence.format(self.START_SENTINEL_NAME))
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
             self.logger.info(f"Got lock")
-            reply = [packb(KrakenSignals.OK_TO_BEGIN.value), self.token]
+            reply = [packb(Signals.OK_TO_BEGIN.value), self.token]
         else:
-            reply = [packb(KrakenSignals.PLEASE_WAIT.value), packb(None)]
+            reply = [packb(Signals.WAIT_FOR_TOKEN.value), packb(None)]
         return reply
 
     def run_batch(self, token, seq: bytes) -> List:
@@ -288,7 +275,8 @@ class Server:
         self.all_seqs_submitted_event.set()
         # Is self.all_seqs_submitted guaranteed to be set in the next iteration
         # of the while loop in the return_results thread?
-        self.k2proc.stdin.write(self.fake_sequence.format('END'))
+        self.k2proc.stdin.write(
+            self.fake_sequence.format(self.END_SENTINEL_NAME))
         self.logger.info('flushing')
         self.k2proc.stdin.write(self.flush_seqs)
         self.logger.info("All dummy seqs written")

@@ -10,7 +10,7 @@ import zmq
 
 import pykraken2
 from pykraken2 import _log_level
-from pykraken2.server import KrakenSignals
+from pykraken2.server import Signals
 
 
 class Client:
@@ -40,17 +40,17 @@ class Client:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
             send_socket.send_multipart(
-                [packb(KrakenSignals.GET_TOKEN.value)])
+                [packb(Signals.GET_TOKEN.value)])
 
             signal, token = send_socket.recv_multipart()
             signal = unpackb(signal)
 
-            if signal == KrakenSignals.OK_TO_BEGIN.value:
+            if signal == Signals.OK_TO_BEGIN.value:
                 self.token = token
                 self.logger.info('Acquired server token')
                 # Start thread for receiving input
                 break
-            elif signal == KrakenSignals.PLEASE_WAIT.value:
+            elif signal == Signals.WAIT_FOR_TOKEN.value:
                 time.sleep(1)
                 self.logger.info('Waiting for lock on server')
 
@@ -80,14 +80,14 @@ class Client:
 
                 if seq:
                     socket.send_multipart(
-                        [packb(KrakenSignals.RUN_BATCH.value),
+                        [packb(Signals.RUN_BATCH.value),
                          self.token, seq.encode('UTF-8')])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
                     socket.recv_multipart()
                 else:
                     socket.send_multipart(
-                        [packb(KrakenSignals.FINISH_TRANSACTION.value),
+                        [packb(Signals.FINISH_TRANSACTION.value),
                          self.token])
                     socket.recv()
                     self.logger.info('Sending data finished')
@@ -129,13 +129,15 @@ class Client:
                 status = unpackb(msg)
                 socket.send(b'Received')
 
-                if status == KrakenSignals.DONE.value:
+                result = payload.decode('UTF-8')
+                yield result
+
+                if status == Signals.TRANSACTION_COMPLETE.value:
                     self.logger.info(
                         'Received data processing complete message')
                     break
-                elif status == KrakenSignals.NOT_DONE.value:
-                    result = payload.decode('UTF-8')
-                    yield result
+                elif status == Signals.TRANSACTION_NOT_DONE.value:
+                    continue
 
         socket.close()
         context.term()
