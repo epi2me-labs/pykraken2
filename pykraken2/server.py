@@ -7,7 +7,6 @@ import time
 from typing import List
 import uuid
 
-import portpicker
 import zmq
 
 import pykraken2
@@ -118,7 +117,7 @@ class Server:
             '--batch-size', str(self.K2_BATCH_SIZE),
             '/dev/fd/0']
 
-        self.return_port = free_ports(1)[0]
+        self.return_port = pykraken2.free_ports(1)[0]
 
         self.k2proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
