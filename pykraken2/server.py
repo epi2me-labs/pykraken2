@@ -96,36 +96,6 @@ class Server:
         """Exit context manager."""
         self.terminate()
 
-    def run(self):
-        """Start the server.
-
-        :raises IOError if zmq cannot bind socket.
-        """
-        cmd = [
-            'stdbuf', '-oL',
-            self.k2_binary,
-            '--db', self.kraken_db_dir,
-            '--threads', str(self.threads),
-            '--batch-size', str(self.K2_BATCH_SIZE),
-            '/dev/fd/0'
-        ]
-
-        self.return_port = free_ports(1)[0]
-
-        self.k2proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
-
-        self.logger.info('Loading kraken2 database')
-
-        self.recv_thread = Thread(
-            target=self.recv)
-        self.recv_thread.start()
-
-        self.return_thread = Thread(
-            target=self.return_results)
-        self.return_thread.start()
-
     def terminate(self):
         """Wait for processing and threads to terminate and exit."""
         self.logger.debug('Waiting for processing to finish')
@@ -134,9 +104,33 @@ class Server:
         self.return_thread.join()
         self.logger.info('Exiting!')
 
-    def return_results(self):
+    def run(self):
+        """Start the server.
+
+        :raises IOError if zmq cannot bind socket.
         """
-        Return kraken2 results to clients.
+        self.logger.info('Loading kraken2 database')
+        cmd = [
+            'stdbuf', '-oL',
+            self.k2_binary,
+            '--db', self.kraken_db_dir,
+            '--threads', str(self.threads),
+            '--batch-size', str(self.K2_BATCH_SIZE),
+            '/dev/fd/0']
+
+        self.return_port = free_ports(1)[0]
+
+        self.k2proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
+
+        self.recv_thread = Thread(target=self.recv)
+        self.recv_thread.start()
+        self.return_thread = Thread(target=self.return_results)
+        self.return_thread.start()
+
+    def return_results(self):
+        """Return kraken2 results to clients.
 
         Poll the kraken process stdout for results.
 
@@ -287,32 +281,11 @@ class Server:
 
 def main(args):
     """Entry point to run a kraken2 server."""
-    server = Server(
-        args.database, args.address, args.port, args.k2_binary, args.threads)
-    server.run()
-
-
-def free_ports(number=2, lowest=1024):
-    """Find a set of consecutive free ports.
-
-    :param number: the number of ports required.
-    :param lowest: lowest permissable port.
-
-    ..note:: there maybe be race conditions, such that the
-        returned list is not guaranteed to be free ports.
-    """
-    port_list = list()
-    while True:
-        if portpicker.is_port_free(lowest):
-            port_list.append(lowest)
-            if len(port_list) == number:
-                break
-        else:
-            port_list = list()
-        lowest += 1
-        if lowest == 65536:
-            raise RuntimeError("Cannot find free port set.")
-    return port_list
+    with Server(
+            args.database, args.address, args.port,
+            args.k2_binary, args.threads):
+        while True:
+            pass
 
 
 def argparser():
