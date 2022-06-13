@@ -11,10 +11,13 @@ from typing import List
 import uuid
 
 from msgpack import packb, unpackb
+import portpicker
 import zmq
 
 import pykraken2
 from pykraken2 import _log_level
+
+ZMQ_MSG_SIZE = 10000
 
 
 class Signals(Enum):
@@ -54,14 +57,14 @@ class Server:
     END_SENTINEL_NAME = 'END'
 
     def __init__(
-            self, kraken_db_dir, address='localhost', ports=[5555, 5556],
+            self, kraken_db_dir, address='localhost', port=5555,
             k2_binary='kraken2', threads=1):
         """
         Server constructor.
 
         :param address: address of the server:
             e.g. 127.0.0.1 or localhost
-        :param ports: [input port, output port]
+        :param port: port for initial connection
         :param kraken_db_dir: path to kraken2 database directory
         :param k2_binary: path to kraken2 binary
         :param threads: number of threads for kraken2
@@ -72,14 +75,13 @@ class Server:
         self.k2_binary = k2_binary
         self.threads = threads
         self.address = address
-        self.ports = ports
-        self.active = True
+        self.recv_port = port
+        self.return_port = None
 
         self.recv_thread = None
         self.return_thread = None
         self.k2proc = None
 
-        # self.client_connected = threading.Event()
         self.client_lock = Lock()
         self.token = None
         # Have all seqs from current sample been passed to kraken
@@ -118,6 +120,8 @@ class Server:
             '/dev/fd/0'
         ]
 
+        self.return_port = free_ports(1)[0]
+
         self.k2proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
@@ -143,7 +147,7 @@ class Server:
         """
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
-        socket.connect(f"tcp://{self.address}:{self.ports[1]}")
+        socket.connect(f"tcp://{self.address}:{self.return_port}")
 
         while not self.terminate_event.is_set():
             if self.client_lock.locked():  # Is a client connected?
@@ -185,8 +189,7 @@ class Server:
                     self.client_lock.release()
                     continue
 
-                # TODO: don't hardcode 10000
-                stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
+                stdout = self.k2proc.stdout.read(ZMQ_MSG_SIZE).encode('UTF-8')
 
                 socket.send_multipart(
                     [packb(Signals.TRANSACTION_NOT_DONE.value),
@@ -210,10 +213,10 @@ class Server:
         context = zmq.Context()
         socket = context.socket(zmq.REP)
         try:
-            socket.bind(f'tcp://{self.address}:{self.ports[0]}')
+            socket.bind(f'tcp://{self.address}:{self.recv_port}')
         except zmq.error.ZMQError as e:
             raise IOError(
-                f'Port in use: Try "kill -9 `lsof -i tcp:{self.ports[0]}`"') \
+                f'Port in use: Try "kill -9 `lsof -i tcp:{self.recv_port}`"') \
                 from e
 
         poller = zmq.Poller()
@@ -245,9 +248,13 @@ class Server:
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
             self.logger.info(f"Got lock")
-            reply = [packb(Signals.OK_TO_BEGIN.value), self.token]
+            reply = [
+                packb(Signals.OK_TO_BEGIN.value), self.token,
+                packb(self.return_port)]
         else:
-            reply = [packb(Signals.WAIT_FOR_TOKEN.value), packb(None)]
+            reply = [
+                packb(Signals.WAIT_FOR_TOKEN.value),
+                packb(None), packb(None)]
         return reply
 
     def run_batch(self, token, seq: bytes) -> List:
@@ -294,8 +301,31 @@ class Server:
 def main(args):
     """Entry point to run a kraken2 server."""
     server = Server(
-        args.database, args.address, args.ports, args.k2_binary, args.threads)
+        args.database, args.address, args.port, args.k2_binary, args.threads)
     server.run()
+
+
+def free_ports(number=2, lowest=1024):
+    """Find a set of consecutive free ports.
+
+    :param number: the number of ports required.
+    :param lowest: lowest permissable port.
+
+    ..note:: there maybe be race conditions, such that the
+        returned list is not guaranteed to be free ports.
+    """
+    port_list = list()
+    while True:
+        if portpicker.is_port_free(lowest):
+            port_list.append(lowest)
+            if len(port_list) == number:
+                break
+        else:
+            port_list = list()
+        lowest += 1
+        if lowest == 65536:
+            raise RuntimeError("Cannot find free port set.")
+    return port_list
 
 
 def argparser():
@@ -306,7 +336,7 @@ def argparser():
         parents=[_log_level()], add_help=False)
     parser.add_argument('database')
     parser.add_argument("--address", default='localhost')
-    parser.add_argument('--ports', nargs='+', default=[5555, 5556])
+    parser.add_argument('--port', default=5555)
     parser.add_argument('--threads', default=8)
     parser.add_argument('--k2-binary', default='kraken2')
     return parser

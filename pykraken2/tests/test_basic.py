@@ -7,8 +7,6 @@ import tempfile
 from threading import Thread
 import unittest
 
-import portpicker
-
 from pykraken2.client import Client
 from pykraken2.server import Server
 
@@ -28,7 +26,7 @@ class SimpleTest(unittest.TestCase):
         cls.expected_output1 = data_dir / 'correct_output' / 'k2out1.tsv'
         cls.expected_output2 = data_dir / 'correct_output' / 'k2out2.tsv'
         # cls.ports = free_ports()
-        cls.ports = [5555, 5556]
+        cls.port = 5555
         cls.address = '127.0.0.1'
         cls.threads = 4
         cls.k2_binary = 'venv/bin/kraken2'
@@ -56,7 +54,7 @@ class SimpleTest(unittest.TestCase):
     def test_002_create_server(self):
         """Test the server API."""
         server = Server(
-            self.database, self.address, self.ports,
+            self.database, self.address, self.port,
             self.k2_binary, self.threads)
         server.run()
         server.terminate()
@@ -68,18 +66,18 @@ class SimpleTest(unittest.TestCase):
         to the server and receiving the DONE message. So would not normally
         need to use terminate()
         """
-        client = Client(self.address, self.ports)
+        client = Client(self.address, self.port)
         client.process_fastq(self.fastq2)
         client.terminate()
 
     def test_010_process_fastq(self):
         """Test single client."""
         server = Server(
-            self.database, self.address, self.ports,
+            self.database, self.address, self.port,
             self.k2_binary, self.threads)
         server.run()
 
-        client = Client(self.address, self.ports)
+        client = Client(self.address, self.port)
         result = [x for x in client.process_fastq(self.fastq1)]
         server.terminate()
 
@@ -97,11 +95,11 @@ class SimpleTest(unittest.TestCase):
         split between multiple files.
         """
         server = Server(
-            self.database, self.address, self.ports,
+            self.database, self.address, self.port,
             self.k2_binary, self.threads)
         server.run()
 
-        client = Client(self.address, self.ports)
+        client = Client(self.address, self.port)
 
         result = []
         for file_ in [self.fastq1, self.fastq2]:
@@ -127,12 +125,12 @@ class SimpleTest(unittest.TestCase):
         from using kraken2 directly.
         """
         def client_runner(input_, _results):
-            client = Client(self.address, self.ports)
+            client = Client(self.address, self.port)
             for chunk in client.process_fastq(input_):
                 _results.extend(chunk)
 
         server = Server(
-            self.database, self.address, self.ports,
+            self.database, self.address, self.port,
             self.k2_binary, self.threads)
         server.run()
 
@@ -167,26 +165,3 @@ class SimpleTest(unittest.TestCase):
                 self.assertEqual(corr_str, client_str)
 
         server.terminate()
-
-
-def free_ports(number=2, lowest=1024):
-    """Find a set of consecutive free ports.
-
-    :param number: the number of ports required.
-    :param lowest: lowest permissable port.
-
-    ..note:: there maybe be race conditions, such that the
-        returned list is not guaranteed to be free ports.
-    """
-    port_list = list()
-    while True:
-        if portpicker.is_port_free(lowest):
-            port_list.append(lowest)
-            if len(port_list) == number:
-                break
-        else:
-            port_list = list()
-        lowest += 1
-        if lowest == 65536:
-            raise RuntimeError("Cannot find free port set.")
-    return port_list

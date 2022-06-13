@@ -10,14 +10,14 @@ import zmq
 
 import pykraken2
 from pykraken2 import _log_level
-from pykraken2.server import Signals
+from pykraken2.server import Signals, ZMQ_MSG_SIZE
 
 
 class Client:
     """Client class to stream sequence data to kraken2  server."""
 
     def __init__(
-            self, address='localhost', ports=[5555, 5556]):
+            self, address='localhost', send_port=5555):
         """Init function.
 
         :param address: server address
@@ -25,7 +25,8 @@ class Client:
         """
         self.logger = pykraken2.get_named_logger('Client}')
         self.address = address
-        self.send_port, self.recv_port = ports
+        self.send_port = send_port
+        self.recv_port = None
         self.context = zmq.Context()
         self.terminate_event = threading.Event()
         self.token = None
@@ -42,12 +43,13 @@ class Client:
             send_socket.send_multipart(
                 [packb(Signals.GET_TOKEN.value)])
 
-            signal, token = send_socket.recv_multipart()
+            signal, token, port = send_socket.recv_multipart()
             signal = unpackb(signal)
 
             if signal == Signals.OK_TO_BEGIN.value:
                 self.token = token
                 self.logger.info('Acquired server token')
+                self.recv_port = unpackb(port)
                 # Start thread for receiving input
                 break
             elif signal == Signals.WAIT_FOR_TOKEN.value:
@@ -73,10 +75,8 @@ class Client:
                 # There was a suggestion to send all the reads from a sample
                 # as a single message. But this would require reading the whole
                 # fastq file into memory first.
-                # TODO: better to send a fixed number of lines, even one record
-                #       at a time?
 
-                seq = fh.read(100000)
+                seq = fh.read(ZMQ_MSG_SIZE)
 
                 if seq:
                     socket.send_multipart(
@@ -101,19 +101,15 @@ class Client:
         poller = zmq.Poller()
         poller.register(socket, flags=zmq.POLLIN)
 
-        # TODO: If Linger not set, we get stuck somewhere.
-        # I think it means there are unsent messages and the socket will not
-        # get closed with default -1. With this set it discards unsent
-        # messages after 1s. Look into this
-        socket.setsockopt(zmq.LINGER, 1)
+        self.logger.warn(f'tcp://{self.address}:{self.recv_port}')
 
         while not self.terminate_event.is_set():
             try:
                 socket.bind(f'tcp://{self.address}:{self.recv_port}')
             except zmq.error.ZMQError as e:
-                self.logger.warn(
-                    f'Client: Port in use?: '
-                    f'Try "kill -9 `lsof -i tcp:{self.recv_port}`"')
+                self.logger.error(
+                    'Client cannot connect to server at: '
+                    f'tcp://{self.address}:{self.recv_port}')
                 self.logger.exception(e)
             else:
                 break
@@ -170,7 +166,7 @@ def argparser():
         "--address", default='localhost'
     )
     parser.add_argument(
-        "--ports", default=[5555, 5556],
+        "--port", default=5555,
         nargs='+',
         help="")
     parser.add_argument(
