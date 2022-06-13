@@ -1,8 +1,13 @@
 """pykraken2 server/client."""
 
 import argparse
+from enum import Enum
 import importlib
 import logging
+import pickle
+
+import msgpack
+import portpicker
 
 __version__ = "0.0.1"
 
@@ -31,6 +36,68 @@ def _log_level():
         help='Minimal logging; warnings only).')
 
     return parser
+
+
+def free_ports(number=1, lowest=1024):
+    """Find a set of consecutive free ports.
+
+    :param number: the number of ports required.
+    :param lowest: lowest permissable port.
+
+    ..note:: there maybe be race conditions, such that the
+        returned list is not guaranteed to be free ports.
+    """
+    port_list = list()
+    while True:
+        if portpicker.is_port_free(lowest):
+            port_list.append(lowest)
+            if len(port_list) == number:
+                break
+        else:
+            port_list = list()
+        lowest += 1
+        if lowest == 65536:
+            raise RuntimeError("Cannot find free port set.")
+    return port_list
+
+
+class Signals(Enum):
+    """Client/Server communication enum."""
+
+    # client to server
+    GET_TOKEN = 1
+    FINISH_TRANSACTION = 2
+    RUN_BATCH = 3
+    # server to client
+    TRANSACTION_NOT_DONE = 50
+    TRANSACTION_COMPLETE = 51
+    OK_TO_BEGIN = 52
+    WAIT_FOR_TOKEN = 53
+
+
+def _encode(obj):
+    """Encode for msgpack."""
+    print(obj, isinstance(obj, Signals))
+    if isinstance(obj, Signals):
+        return msgpack.ExtType(101, pickle.dumps(obj))
+    raise TypeError("Unknown type: {}".format(obj))
+
+
+def _decode(code, data):
+    """Decode from msgpack."""
+    if code == 101:
+        return pickle.loads(data)
+    return msgpack.ExtType(code, data)
+
+
+def packb(message):
+    """Pack data through msgpack."""
+    return msgpack.packb(message, default=_encode, use_bin_type=True)
+
+
+def unpackb(message):
+    """Unpack data from msgpack."""
+    return msgpack.unpackb(message, ext_hook=_decode, raw=False)
 
 
 def cli():

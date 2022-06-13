@@ -9,17 +9,16 @@ venv/bin/activate:
 	${IN_VENV} && pip install -r requirements.txt
 
 .PHONY: develop
-develop: venv/bin/activate kraken2
+develop: venv/bin/activate venv/bin/kraken2
 	${IN_VENV} && pip install -e .
 
 
-.PHONY: kraken2
-kraken2: venv/bin/activate
+venv/bin/kraken2: venv/bin/activate
 	cd kraken2 && ../install_kraken2.sh ../venv/bin
 
 
 .PHONY: test
-test: venv/bin/activate kraken2
+test: venv/bin/activate venv/bin/kraken2
 	${IN_VENV} && pip install pytest pytest-cov flake8 flake8-rst-docstrings flake8-docstrings flake8-import-order flake8-forbid-visual-indent
 	${IN_VENV} && flake8 pykraken2 \
 		--import-order-style google --application-import-names pykraken2 \

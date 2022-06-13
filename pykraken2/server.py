@@ -1,8 +1,5 @@
 """pykraken2 server module."""
-
-
 import argparse
-from enum import Enum
 import subprocess
 import threading
 from threading import Lock, Thread
@@ -10,25 +7,10 @@ import time
 from typing import List
 import uuid
 
-from msgpack import packb, unpackb
 import zmq
 
 import pykraken2
-from pykraken2 import _log_level
-
-
-class Signals(Enum):
-    """Client/Server communication enum."""
-
-    # client to server
-    GET_TOKEN = 1
-    FINISH_TRANSACTION = 2
-    RUN_BATCH = 3
-    # server to client
-    TRANSACTION_NOT_DONE = 50
-    TRANSACTION_COMPLETE = 51
-    OK_TO_BEGIN = 52
-    WAIT_FOR_TOKEN = 53
+from pykraken2 import _log_level, packb, Signals, unpackb
 
 
 class Server:
@@ -104,37 +86,47 @@ class Server:
         # writing results
         self.logger.info(f'k2 binary: {k2_binary}')
 
+    def __enter__(self):
+        """Enter context manager."""
+        self.run()
+        return self
+
+    def __exit__(self, etype, value, traceback):
+        """Exit context manager."""
+        self.terminate()
+
+    def terminate(self):
+        """Wait for processing and threads to terminate and exit."""
+        self.logger.debug('Waiting for processing to finish')
+        self.terminate_event.set()
+        self.recv_thread.join()
+        self.return_thread.join()
+        self.logger.info('Exiting!')
+
     def run(self):
         """Start the server.
 
         :raises IOError if zmq cannot bind socket.
         """
+        self.logger.info('Loading kraken2 database')
         cmd = [
             'stdbuf', '-oL',
             self.k2_binary,
             '--db', self.kraken_db_dir,
             '--threads', str(self.threads),
             '--batch-size', str(self.K2_BATCH_SIZE),
-            '/dev/fd/0'
-        ]
+            '/dev/fd/0']
 
         self.k2proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
-
-        self.logger.info('Loading kraken2 database')
-
-        self.recv_thread = Thread(
-            target=self.recv)
+        self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
-
-        self.return_thread = Thread(
-            target=self.return_results)
+        self.return_thread = Thread(target=self.return_results)
         self.return_thread.start()
 
     def return_results(self):
-        """
-        Return kraken2 results to clients.
+        """Return kraken2 results to clients.
 
         Poll the kraken process stdout for results.
 
@@ -172,7 +164,7 @@ class Server:
 
                             final_bit = "".join(final_lines).encode('UTF-8')
                             socket.send_multipart(
-                                [packb(Signals.TRANSACTION_COMPLETE.value),
+                                [packb(Signals.TRANSACTION_COMPLETE),
                                  self.token, final_bit])
                             socket.recv()
 
@@ -189,7 +181,7 @@ class Server:
                 stdout = self.k2proc.stdout.read(10000).encode('UTF-8')
 
                 socket.send_multipart(
-                    [packb(Signals.TRANSACTION_NOT_DONE.value),
+                    [packb(Signals.TRANSACTION_NOT_DONE),
                      self.token, stdout])
                 socket.recv()
 
@@ -245,9 +237,9 @@ class Server:
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
             self.logger.info("Got lock")
-            reply = [packb(Signals.OK_TO_BEGIN.value), self.token]
+            reply = [packb(Signals.OK_TO_BEGIN), self.token]
         else:
-            reply = [packb(Signals.WAIT_FOR_TOKEN.value), packb(None)]
+            reply = [packb(Signals.WAIT_FOR_TOKEN), packb(None)]
         return reply
 
     def run_batch(self, token, seq: bytes) -> List:
@@ -282,20 +274,14 @@ class Server:
         self.logger.info("All dummy seqs written")
         return [packb("Transaction finished"), packb(None)]
 
-    def terminate(self):
-        """Wait for processing and threads to terminate and exit."""
-        self.logger.debug('Waiting for processing to finish')
-        self.terminate_event.set()
-        self.recv_thread.join()
-        self.return_thread.join()
-        self.logger.info('Exiting!')
-
 
 def main(args):
     """Entry point to run a kraken2 server."""
-    server = Server(
-        args.database, args.address, args.ports, args.k2_binary, args.threads)
-    server.run()
+    with Server(
+            args.database, args.address, args.ports,
+            args.k2_binary, args.threads):
+        while True:
+            pass
 
 
 def argparser():

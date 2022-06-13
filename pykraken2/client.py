@@ -5,12 +5,10 @@ import threading
 from threading import Thread
 import time
 
-from msgpack import packb, unpackb
 import zmq
 
 import pykraken2
-from pykraken2 import _log_level
-from pykraken2.server import Signals
+from pykraken2 import _log_level, packb, Signals, unpackb
 
 
 class Client:
@@ -23,34 +21,45 @@ class Client:
         :param address: server address
         :param ports:  [send data port, receive results port]
         """
+        self.context = zmq.Context.instance()
         self.logger = pykraken2.get_named_logger('Client}')
         self.address = address
         self.send_port, self.recv_port = ports
-        self.context = zmq.Context()
         self.terminate_event = threading.Event()
         self.token = None
 
+    def __enter__(self):
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, etype, value, traceback):
+        """Exit context manager."""
+        self.terminate()
+
+    def terminate(self):
+        """Terminate the client."""
+        self.terminate_event.set()
+
     def process_fastq(self, fastq):
         """Process a fastq file."""
-        send_context = zmq.Context()
-        send_socket = send_context.socket(zmq.REQ)
+        send_socket = self.context.socket(zmq.REQ)
         send_socket.connect(f"tcp://{self.address}:{self.send_port}")
 
         while True:
             # Try to get a unique lock on the server
             # register the number of sequences to expect
             send_socket.send_multipart(
-                [packb(Signals.GET_TOKEN.value)])
+                [packb(Signals.GET_TOKEN)])
 
             signal, token = send_socket.recv_multipart()
             signal = unpackb(signal)
 
-            if signal == Signals.OK_TO_BEGIN.value:
+            if signal == Signals.OK_TO_BEGIN:
                 self.token = token
                 self.logger.info('Acquired server token')
                 # Start thread for receiving input
                 break
-            elif signal == Signals.WAIT_FOR_TOKEN.value:
+            elif signal == Signals.WAIT_FOR_TOKEN:
                 time.sleep(1)
                 self.logger.info('Waiting for lock on server')
 
@@ -62,12 +71,9 @@ class Client:
             yield chunk
 
         send_thread.join()
-
         send_socket.close()
-        send_context.term()
 
     def _send_worker(self, fastq, socket):
-
         with open(fastq, 'r') as fh:
             while not self.terminate_event.is_set():
                 # There was a suggestion to send all the reads from a sample
@@ -80,24 +86,22 @@ class Client:
 
                 if seq:
                     socket.send_multipart(
-                        [packb(Signals.RUN_BATCH.value),
+                        [packb(Signals.RUN_BATCH),
                          self.token, seq.encode('UTF-8')])
                     # It is required to receive with the REQ/REP pattern, even
                     # if the msg is not used
                     socket.recv_multipart()
                 else:
                     socket.send_multipart(
-                        [packb(Signals.FINISH_TRANSACTION.value),
+                        [packb(Signals.FINISH_TRANSACTION),
                          self.token])
                     socket.recv()
                     self.logger.info('Sending data finished')
-                    socket.close()
                     break
 
     def _receiver(self):
         """Worker to receive results."""
-        context = zmq.Context()
-        socket = context.socket(zmq.REP)
+        socket = self.context.socket(zmq.REP)
         poller = zmq.Poller()
         poller.register(socket, flags=zmq.POLLIN)
 
@@ -132,28 +136,22 @@ class Client:
                 result = payload.decode('UTF-8')
                 yield result
 
-                if status == Signals.TRANSACTION_COMPLETE.value:
+                if status == Signals.TRANSACTION_COMPLETE:
                     self.logger.info(
                         'Received data processing complete message')
                     break
-                elif status == Signals.TRANSACTION_NOT_DONE.value:
+                elif status == Signals.TRANSACTION_NOT_DONE:
                     continue
 
         socket.close()
-        context.term()
-
-    def terminate(self):
-        """Terminate the client."""
-        self.terminate_event.set()
 
 
 def main(args):
     """Entry point to run a kraken2 client."""
-    client = Client(args.address, args.ports)
-
-    with open(args.out, 'w') as fh:
-        for chunk in client.process_fastq(args.fastq):
-            fh.write(chunk)
+    with Client(args.address, args.ports) as client:
+        with open(args.out, 'w') as fh:
+            for chunk in client.process_fastq(args.fastq):
+                fh.write(chunk)
 
 
 def argparser():
