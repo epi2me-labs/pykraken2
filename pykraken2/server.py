@@ -1,8 +1,5 @@
 """pykraken2 server module."""
-
-
 import argparse
-from enum import Enum
 import subprocess
 import threading
 from threading import Lock, Thread
@@ -10,28 +7,11 @@ import time
 from typing import List
 import uuid
 
-from msgpack import packb, unpackb
 import portpicker
 import zmq
 
 import pykraken2
-from pykraken2 import _log_level
-
-ZMQ_MSG_SIZE = 10000
-
-
-class Signals(Enum):
-    """Client/Server communication enum."""
-
-    # client to server
-    GET_TOKEN = 1
-    FINISH_TRANSACTION = 2
-    RUN_BATCH = 3
-    # server to client
-    TRANSACTION_NOT_DONE = 50
-    TRANSACTION_COMPLETE = 51
-    OK_TO_BEGIN = 52
-    WAIT_FOR_TOKEN = 53
+from pykraken2 import _log_level, packb, Signals, unpackb, ZMQ_MSG_SIZE
 
 
 class Server:
@@ -70,6 +50,7 @@ class Server:
         :param threads: number of threads for kraken2
         """
         self.logger = pykraken2.get_named_logger('Server')
+        self.context = zmq.Context.instance()
         self.kraken_db_dir = kraken_db_dir
 
         self.k2_binary = k2_binary
@@ -106,6 +87,15 @@ class Server:
         # writing results
         self.logger.info(f'k2 binary: {k2_binary}')
 
+    def __enter__(self):
+        """Enter context manager."""
+        self.run()
+        return self
+
+    def __exit__(self, etype, value, traceback):
+        """Exit context manager."""
+        self.terminate()
+
     def run(self):
         """Start the server.
 
@@ -136,6 +126,14 @@ class Server:
             target=self.return_results)
         self.return_thread.start()
 
+    def terminate(self):
+        """Wait for processing and threads to terminate and exit."""
+        self.logger.debug('Waiting for processing to finish')
+        self.terminate_event.set()
+        self.recv_thread.join()
+        self.return_thread.join()
+        self.logger.info('Exiting!')
+
     def return_results(self):
         """
         Return kraken2 results to clients.
@@ -145,8 +143,7 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels.
         """
-        context = zmq.Context()
-        socket = context.socket(zmq.REQ)
+        socket = self.context.socket(zmq.REQ)
         socket.connect(f"tcp://{self.address}:{self.return_port}")
 
         while not self.terminate_event.is_set():
@@ -176,7 +173,7 @@ class Server:
 
                             final_bit = "".join(final_lines).encode('UTF-8')
                             socket.send_multipart(
-                                [packb(Signals.TRANSACTION_COMPLETE.value),
+                                [packb(Signals.TRANSACTION_COMPLETE),
                                  self.token, final_bit])
                             socket.recv()
 
@@ -192,7 +189,7 @@ class Server:
                 stdout = self.k2proc.stdout.read(ZMQ_MSG_SIZE).encode('UTF-8')
 
                 socket.send_multipart(
-                    [packb(Signals.TRANSACTION_NOT_DONE.value),
+                    [packb(Signals.TRANSACTION_NOT_DONE),
                      self.token, stdout])
                 socket.recv()
 
@@ -200,7 +197,6 @@ class Server:
                 self.logger.info('Waiting for lock')
                 time.sleep(1)
         socket.close()
-        context.term()
         self.logger.info('Return thread exiting')
 
     def recv(self):
@@ -210,8 +206,7 @@ class Server:
         Listens for messages from the input socket and forward them to
         the appropriate functions.
         """
-        context = zmq.Context()
-        socket = context.socket(zmq.REP)
+        socket = self.context.socket(zmq.REP)
         try:
             socket.bind(f'tcp://{self.address}:{self.recv_port}')
         except zmq.error.ZMQError as e:
@@ -226,11 +221,11 @@ class Server:
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
                 query = socket.recv_multipart()
+                print(unpackb(query[0]))
                 route = Signals(unpackb(query[0])).name.lower()
                 msg = getattr(self, route)(*query[1:])
                 socket.send_multipart(msg)
         socket.close()
-        context.term()
         self.logger.info('recv thread existing')
 
     def get_token(self) -> List:
@@ -247,13 +242,13 @@ class Server:
                 self.fake_sequence.format(self.START_SENTINEL_NAME))
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
-            self.logger.info(f"Got lock")
+            self.logger.info("Got lock")
             reply = [
-                packb(Signals.OK_TO_BEGIN.value), self.token,
+                packb(Signals.OK_TO_BEGIN), self.token,
                 packb(self.return_port)]
         else:
             reply = [
-                packb(Signals.WAIT_FOR_TOKEN.value),
+                packb(Signals.WAIT_FOR_TOKEN),
                 packb(None), packb(None)]
         return reply
 
@@ -288,14 +283,6 @@ class Server:
         self.k2proc.stdin.write(self.flush_seqs)
         self.logger.info("All dummy seqs written")
         return [packb("Transaction finished"), packb(None)]
-
-    def terminate(self):
-        """Wait for processing and threads to terminate and exit."""
-        self.logger.debug('Waiting for processing to finish')
-        self.terminate_event.set()
-        self.recv_thread.join()
-        self.return_thread.join()
-        self.logger.info('Exiting!')
 
 
 def main(args):
