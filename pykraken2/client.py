@@ -138,11 +138,10 @@ class Client:
 
 def main(args):
     """Entry point to run a kraken2 client."""
-    client = Client(args.address, args.ports)
-
-    with open(args.out, 'w') as fh:
-        for chunk in client.process_fastq(args.fastq):
-            fh.write(chunk)
+    with Client(args.address, args.ports) as client:
+        with open(args.out, 'w') as fh:
+            for chunk in client.process_fastq(args.fastq):
+                fh.write(chunk)
 
 
 def argparser():
