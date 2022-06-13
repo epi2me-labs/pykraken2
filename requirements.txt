@@ -1,1 +1,3 @@
 pyzmq
+msgpack
+portpicker

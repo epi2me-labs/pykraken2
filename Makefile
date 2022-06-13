@@ -19,7 +19,7 @@ kraken2: venv/bin/activate
 
 
 .PHONY: test
-test: venv/bin/activate
+test: venv/bin/activate kraken2
 	${IN_VENV} && pip install pytest pytest-cov flake8 flake8-rst-docstrings flake8-docstrings flake8-import-order flake8-forbid-visual-indent
 	${IN_VENV} && flake8 pykraken2 \
 		--import-order-style google --application-import-names pykraken2 \
