@@ -14,7 +14,7 @@ image: ${UBUNTUIMAGE}:20.04
 .prep-image: &prep-image |
     export DEBIAN_FRONTEND=noninteractive
     apt update -qq
-    apt install -y --no-install-recommends make wget python3-all-dev python3-venv 
+    apt install -y --no-install-recommends make wget python3-all-dev python3-venv cmake 
 
 
 stages:
