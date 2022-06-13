@@ -117,7 +117,7 @@ class Server:
             '--batch-size', str(self.K2_BATCH_SIZE),
             '/dev/fd/0']
 
-        self.return_port = pykraken2.free_ports(1)[0]
+        self.return_port = pykraken2.free_ports(1, lowest=self.recv_port+1)[0]
 
         self.k2proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -214,7 +214,6 @@ class Server:
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
                 query = socket.recv_multipart()
-                print(unpackb(query[0]))
                 route = Signals(unpackb(query[0])).name.lower()
                 msg = getattr(self, route)(*query[1:])
                 socket.send_multipart(msg)
