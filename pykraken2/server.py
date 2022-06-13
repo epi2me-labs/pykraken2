@@ -244,7 +244,7 @@ class Server:
                 self.fake_sequence.format(self.START_SENTINEL_NAME))
             self.start_sample_event.set()
             self.all_seqs_submitted_event.clear()
-            self.logger.info(f"Got lock")
+            self.logger.info("Got lock")
             reply = [packb(Signals.OK_TO_BEGIN.value), self.token]
         else:
             reply = [packb(Signals.WAIT_FOR_TOKEN.value), packb(None)]
