@@ -15,16 +15,16 @@ class Client:
     """Client class to stream sequence data to kraken2  server."""
 
     def __init__(
-            self, address='localhost', send_port=5555):
+            self, address='localhost', port=5555):
         """Init function.
 
         :param address: server address
-        :param ports:  [send data port, receive results port]
+        :param port: server port
         """
         self.logger = pykraken2.get_named_logger('Client')
         self.context = zmq.Context.instance()
         self.address = address
-        self.send_port = send_port
+        self.send_port = port
         self.recv_port = None
         self.terminate_event = threading.Event()
         self.token = None
@@ -43,15 +43,14 @@ class Client:
 
     def process_fastq(self, fastq):
         """Process a fastq file."""
+        self.logger.info(f'Sending on tcp://{self.address}:{self.recv_port}')
         send_socket = self.context.socket(zmq.REQ)
         send_socket.connect(f"tcp://{self.address}:{self.send_port}")
 
+        # poll for server to let us start
+        # TODO: change this to zmq.poll rather than explicit sleep
         while True:
-            # Try to get a unique lock on the server
-            # register the number of sequences to expect
-            send_socket.send_multipart(
-                [packb(Signals.GET_TOKEN)])
-
+            send_socket.send_multipart([packb(Signals.GET_TOKEN)])
             signal, token, port = send_socket.recv_multipart()
             signal = unpackb(signal)
 
@@ -59,23 +58,22 @@ class Client:
                 self.token = token
                 self.logger.info('Acquired server token')
                 self.recv_port = unpackb(port)
-                # Start thread for receiving input
                 break
             elif signal == Signals.WAIT_FOR_TOKEN:
                 time.sleep(1)
                 self.logger.info('Waiting for lock on server')
 
+        # start sending and receiving
         send_thread = Thread(
             target=self._send_worker, args=(fastq, send_socket))
         send_thread.start()
-
         for chunk in self._receiver():
             yield chunk
-
         send_thread.join()
         send_socket.close()
 
     def _send_worker(self, fastq, socket):
+        self.logger.info("Starting to send data.")
         with open(fastq, 'r') as fh:
             while not self.terminate_event.is_set():
                 seq = fh.read(ZMQ_MSG_SIZE)
@@ -83,25 +81,21 @@ class Client:
                     socket.send_multipart(
                         [packb(Signals.RUN_BATCH),
                          self.token, seq.encode('UTF-8')])
-                    # It is required to receive with the REQ/REP pattern, even
-                    # if the msg is not used
                     socket.recv_multipart()
                 else:
                     socket.send_multipart(
                         [packb(Signals.FINISH_TRANSACTION),
                          self.token])
-                    socket.recv()
-                    self.logger.info('Sending data finished')
+                    socket.recv_multipart()
                     break
+        self.logger.info("Sending data finished.")
 
     def _receiver(self):
         """Worker to receive results."""
+        self.logger.info(f'Receiving on tcp://{self.address}:{self.recv_port}')
         socket = self.context.socket(zmq.REP)
-        poller = zmq.Poller()
-        poller.register(socket, flags=zmq.POLLIN)
 
-        self.logger.warn(f'tcp://{self.address}:{self.recv_port}')
-
+        # bind to the socket. Not sure why we try so hard here.
         while not self.terminate_event.is_set():
             try:
                 socket.bind(f'tcp://{self.address}:{self.recv_port}')
@@ -113,8 +107,10 @@ class Client:
             else:
                 break
             time.sleep(1)
-        self.logger.info("_receiver listening")
+        self.logger.info("Receiver bound to socket.")
 
+        poller = zmq.Poller()
+        poller.register(socket, flags=zmq.POLLIN)
         while not self.terminate_event.is_set():
             if poller.poll(timeout=1000):
                 msg, token, payload = socket.recv_multipart()
@@ -128,12 +124,15 @@ class Client:
                 yield result
 
                 if status == Signals.TRANSACTION_COMPLETE:
-                    self.logger.info(
-                        'Received data processing complete message')
+                    self.logger.debug(
+                        'Received TRANSACTION_COMPLETE message.')
                     break
                 elif status == Signals.TRANSACTION_NOT_DONE:
+                    self.logger.debug(
+                        'Received TRANSACTION_NOT_DONE message.')
                     continue
         socket.close()
+        self.logger.info("Receive data thread finished.")
 
 
 def main(args):
@@ -150,18 +149,16 @@ def argparser():
         "kraken2 client",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         parents=[_log_level()], add_help=False)
-    # TODO: server port should be required argument, the second
-    # port isn't a concern for the user.
     parser.add_argument(
-        "fastq")
+        "fastq",
+        help="Input fastq file.")
     parser.add_argument(
-        "--address", default='localhost'
-    )
+        "--address", default='localhost',
+        help="Server address.")
     parser.add_argument(
         "--port", default=5555,
-        nargs='+',
-        help="")
+        help="Server port.")
     parser.add_argument(
-        "--out",
-        help="")
+        "--out", default="pykraken2_out.txt",
+        help="Output file.")
     return parser

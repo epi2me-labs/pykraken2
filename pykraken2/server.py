@@ -4,7 +4,6 @@ import subprocess
 import threading
 from threading import Lock, Thread
 import time
-from typing import List
 import uuid
 
 import zmq
@@ -24,14 +23,14 @@ class Server:
         dummy sequences are fed into the kraken2 subprocess stdin to flush
         out any remaining sequence results.
 
-    return_thread
+    send_thread
         Reads results from the kraken2 subprocess stdout and sends them back
         to the client.
 
     """
 
     FAKE_SEQUENCE_LENGTH = 50
-    K2_BATCH_SIZE = 20
+    K2_BATCH_SIZE = 20  # number of seqs processed together in kraken2
     START_SENTINEL_NAME = 'START'
     END_SENTINEL_NAME = 'END'
 
@@ -41,14 +40,15 @@ class Server:
         """
         Server constructor.
 
+        :param kraken_db_dir: path to kraken2 database directory
         :param address: address of the server:
             e.g. 127.0.0.1 or localhost
         :param port: port for initial connection
-        :param kraken_db_dir: path to kraken2 database directory
         :param k2_binary: path to kraken2 binary
         :param threads: number of threads for kraken2
         """
         self.logger = pykraken2.get_named_logger('Server')
+        self.logger.debug(f'k2 binary: {k2_binary}')
         self.context = zmq.Context.instance()
         self.kraken_db_dir = kraken_db_dir
 
@@ -56,14 +56,13 @@ class Server:
         self.threads = threads
         self.address = address
         self.recv_port = port
-        self.return_port = None
-
+        self.send_port = None
         self.recv_thread = None
-        self.return_thread = None
+        self.send_thread = None
         self.k2proc = None
-
-        self.client_lock = Lock()
         self.token = None
+        self.client_lock = Lock()
+
         # Have all seqs from current sample been passed to kraken
         self.all_seqs_submitted_event = threading.Event()
         # Are we waiting for processing of a sample to start
@@ -82,10 +81,6 @@ class Server:
             self.fake_sequence.format(f"DUMMY_{x}")
             for x in range(self.K2_BATCH_SIZE)])
 
-        # --batch-size sets number of reads that kraken will process before
-        # writing results
-        self.logger.info(f'k2 binary: {k2_binary}')
-
     def __enter__(self):
         """Enter context manager."""
         self.run()
@@ -97,11 +92,11 @@ class Server:
 
     def terminate(self):
         """Wait for processing and threads to terminate and exit."""
-        self.logger.debug('Waiting for processing to finish')
+        self.logger.debug('Terminate calls, waiting for worker threads.')
         self.terminate_event.set()
         self.recv_thread.join()
-        self.return_thread.join()
-        self.logger.info('Exiting!')
+        self.send_thread.join()
+        self.logger.info('Termination complete.')
 
     def run(self):
         """Start the server.
@@ -117,7 +112,7 @@ class Server:
             '--batch-size', str(self.K2_BATCH_SIZE),
             '/dev/fd/0']
 
-        self.return_port = pykraken2.free_ports(1, lowest=self.recv_port+1)[0]
+        self.send_port = pykraken2.free_ports(1, lowest=self.recv_port+1)[0]
 
         self.k2proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -125,10 +120,11 @@ class Server:
 
         self.recv_thread = Thread(target=self.recv)
         self.recv_thread.start()
-        self.return_thread = Thread(target=self.return_results)
-        self.return_thread.start()
+        self.send_thread = Thread(target=self.send_results)
+        self.send_thread.start()
+        self.logger.info("Initialisation complete.")
 
-    def return_results(self):
+    def send_results(self):
         """Return kraken2 results to clients.
 
         Poll the kraken process stdout for results.
@@ -136,14 +132,14 @@ class Server:
         Isolates the real results from the dummy results by looking for
         sentinels.
         """
+        self.logger.info("Starting send results thread.")
         socket = self.context.socket(zmq.REQ)
-        socket.connect(f"tcp://{self.address}:{self.return_port}")
+        socket.connect(f"tcp://{self.address}:{self.send_port}")
 
         while not self.terminate_event.is_set():
             if self.client_lock.locked():  # Is a client connected?
                 if self.start_sample_event.is_set():
-                    # remove any remaining dummy seqs from previous
-                    # samples
+                    # remove any remaining dummy seqs from previous clients
                     while True:
                         line = self.k2proc.stdout.readline()
                         if line.startswith(f'U\t{self.START_SENTINEL_NAME}'):
@@ -151,54 +147,48 @@ class Server:
                             break
 
                 if self.all_seqs_submitted_event.is_set():
-                    # Get the final chunk from the K2 stdout
-                    # Do the final checking for sentinel here as checking each
-                    # line is takes too long.
+                    # get remaining kraken2 output checking for end sentinel
+                    # TODO: reevaluate full line-by-line processing
                     self.logger.info('Checking for sentinel')
-
                     final_lines = []
-
                     while True:
                         line = self.k2proc.stdout.readline()
-
                         if line.startswith(f'U\t{self.END_SENTINEL_NAME}'):
-                            self.logger.info('Found termination sentinel')
-
+                            self.logger.debug('Found termination sentinel')
                             final_bit = "".join(final_lines).encode('UTF-8')
                             socket.send_multipart(
                                 [packb(Signals.TRANSACTION_COMPLETE),
                                  self.token, final_bit])
                             socket.recv()
-
-                            self.logger.debug('Stop sentinel found')
                             break
                         else:
                             final_lines.append(line)
-
-                    self.logger.info('Releasing lock')
+                    # TODO: is this the best place to be releasing?
+                    self.logger.info('Releasing lock.')
                     self.client_lock.release()
                     continue
 
+                # TODO: there's a possible race condition here where we may
+                #       gobble up the end sentinel unintentionally. See
+                #       finish_transaction
                 stdout = self.k2proc.stdout.read(ZMQ_MSG_SIZE).encode('UTF-8')
-
-                socket.send_multipart(
-                    [packb(Signals.TRANSACTION_NOT_DONE),
-                     self.token, stdout])
+                socket.send_multipart([
+                    packb(Signals.TRANSACTION_NOT_DONE),
+                    self.token, stdout])
                 socket.recv()
-
-            else:
-                self.logger.info('Waiting for lock')
+            else:  # no client connected
+                self.logger.info('Waiting for client.')
                 time.sleep(1)
         socket.close()
-        self.logger.info('Return thread exiting')
+        self.logger.info('Send results thread finished.')
 
     def recv(self):
-        """
-        Receive signals from client.
+        """Receive signals from client.
 
         Listens for messages from the input socket and forward them to
         the appropriate functions.
         """
+        self.logger.info("Starting API router thread.")
         socket = self.context.socket(zmq.REP)
         try:
             socket.bind(f'tcp://{self.address}:{self.recv_port}')
@@ -218,14 +208,14 @@ class Server:
                 msg = getattr(self, route)(*query[1:])
                 socket.send_multipart(msg)
         socket.close()
-        self.logger.info('recv thread existing')
+        self.logger.info("API router thread finished.")
 
-    def get_token(self) -> List:
-        """
-        Set a token that client and server share.
+    def get_token(self):
+        """Set a token that client and server share.
 
-        If no current lock, set lock and inform client to start sending data.
-        If lock acquired, return 1 else return 0.
+        :returns: (Signals.OK_TO_BEGIN, token, port) if no client
+            is already connected or (Signals.WAIT_FOR_TOKEN, None, None)
+            if a client should wait.
         """
         if not self.client_lock.locked():
             self.client_lock.acquire()
@@ -237,44 +227,50 @@ class Server:
             self.logger.info("Got lock")
             reply = [
                 packb(Signals.OK_TO_BEGIN), self.token,
-                packb(self.return_port)]
+                packb(self.send_port)]
         else:
             reply = [
                 packb(Signals.WAIT_FOR_TOKEN),
                 packb(None), packb(None)]
         return reply
 
-    def run_batch(self, token, seq: bytes) -> List:
+    def run_batch(self, token, data):
         """Process a data chunk.
 
-        :param seq: a chunk of sequence data.
+        :param data: a chunk of sequence data.
+        :param token: client-server validation token.
         """
         if token != self.token:
-            self.logger.error('run_batch received incorrect token')
-            return [None, None]
-        self.k2proc.stdin.write(seq.decode('UTF-8'))
-        self.k2proc.stdin.flush()
-        return [packb('Server: Chunk received'), packb(None)]
+            self.logger.error('run_batch received incorrect token.')
+            msg = [None, None]
+        else:
+            self.k2proc.stdin.write(data.decode('UTF-8'))
+            self.k2proc.stdin.flush()
+            msg = [packb('Server: Chunk received'), packb(None)]
+        return msg
 
-    def finish_transaction(self, token) -> List:
-        """
-        All data has been sent from a client.
+    def finish_transaction(self, token):
+        """All data has been sent from a client.
 
         Insert STOP sentinel into kraken2 stdin.
         Flush the buffer with some dummy seqs.
         """
         if token != self.token:
-            self.logger.error('finish transaction received incorrect token')
-            return [None, None]
-        self.all_seqs_submitted_event.set()
-        # Is self.all_seqs_submitted guaranteed to be set in the next iteration
-        # of the while loop in the return_results thread?
-        self.k2proc.stdin.write(
-            self.fake_sequence.format(self.END_SENTINEL_NAME))
-        self.logger.info('flushing')
-        self.k2proc.stdin.write(self.flush_seqs)
-        self.logger.info("All dummy seqs written")
-        return [packb("Transaction finished"), packb(None)]
+            self.logger.error(
+                'finish transaction received incorrect token.')
+            msg = [None, None]
+        else:
+            # TODO: see note on race condition in send_results. We
+            #       need to wait here until that thread is ready to
+            #       catch the end sentinel.
+            self.all_seqs_submitted_event.set()
+            self.k2proc.stdin.write(
+                self.fake_sequence.format(self.END_SENTINEL_NAME))
+            self.logger.info('flushing')
+            self.k2proc.stdin.write(self.flush_seqs)
+            self.logger.info("All dummy seqs written")
+            msg = [packb("Transaction finished"), packb(None)]
+        return msg
 
 
 def main(args):
@@ -292,9 +288,19 @@ def argparser():
         "kraken2 server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         parents=[_log_level()], add_help=False)
-    parser.add_argument('database')
-    parser.add_argument("--address", default='localhost')
-    parser.add_argument('--port', default=5555)
-    parser.add_argument('--threads', default=8)
-    parser.add_argument('--k2-binary', default='kraken2')
+    parser.add_argument(
+        'database',
+        help="kraken2 database directory.")
+    parser.add_argument(
+        "--address", default='localhost',
+        help="location on which to listen for clients.")
+    parser.add_argument(
+        '--port', default=5555,
+        help="port on which to listen for clients.")
+    parser.add_argument(
+        '--threads', default=8,
+        help="kraken2 compute threads.")
+    parser.add_argument(
+        '--k2-binary', default='kraken2',
+        help="location of kraken2 binary.")
     return parser
