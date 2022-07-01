@@ -35,7 +35,7 @@ class Server:
     END_SENTINEL_NAME = 'END'
 
     def __init__(
-            self, kraken_db_dir, address='localhost', port=5555,
+            self, kraken_db_dir, address='127.0.0.1', port=5555,
             k2_binary='kraken2', threads=1):
         """
         Server constructor.
@@ -112,7 +112,7 @@ class Server:
             '--batch-size', str(self.K2_BATCH_SIZE),
             '/dev/fd/0']
 
-        self.send_port = pykraken2.free_ports(1, lowest=self.recv_port+1)[0]
+        self.send_port = pykraken2.free_ports(1, lowest=int(self.recv_port)+1)[0]
 
         self.k2proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
