@@ -137,7 +137,7 @@ class Client:
 
 def main(args):
     """Entry point to run a kraken2 client."""
-    with Client(args.address, args.ports) as client:
+    with Client(args.address, args.port) as client:
         with open(args.out, 'w') as fh:
             for chunk in client.process_fastq(args.fastq):
                 fh.write(chunk)
@@ -153,7 +153,7 @@ def argparser():
         "fastq",
         help="Input fastq file.")
     parser.add_argument(
-        "--address", default='localhost',
+        "--address", default='127.0.0.1',
         help="Server address.")
     parser.add_argument(
         "--port", default=5555,
